@@ -1,8 +1,5 @@
-// lib/presentation/pages/verify_email_page.dart
-
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 // Sesuaikan path import ini dengan lokasi AuthService Anda
 import '../../cubit/auth_service.dart';
@@ -50,7 +47,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
       _timer?.cancel();
       // Menggunakan pushReplacement agar pengguna tidak bisa kembali ke halaman verifikasi
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => const dashboard()),
+        MaterialPageRoute(builder: (context) => const Dashboard()),
       );
     }
   }
