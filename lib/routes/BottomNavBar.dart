@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:curved_navigation_bar/curved_navigation_bar.dart';
 import 'package:smart_farming/cubit/navigation_cubit.dart';
-import 'package:smart_farming/pages/pest_page.dart';
+import 'package:smart_farming/pages/pest_detection_page.dart';
 import 'package:smart_farming/pages/plant_page.dart';
 import 'package:smart_farming/widgets/app_drawer.dart';
 import 'package:smart_farming/theme/app_colors.dart';
