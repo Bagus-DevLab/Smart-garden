@@ -341,7 +341,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
             TextField(
               controller: controller,
               decoration: InputDecoration(
-                hintText: 'http://192.168.1.100:5000',
+                hintText: 'https://web-production-849bb.up.railway.app/',
                 prefixIcon: const Icon(Icons.link),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -351,7 +351,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Contoh: http://192.168.1.100:5000',
+              'https://web-production-849bb.up.railway.app/',
               style: TextStyle(
                 fontSize: 11,
                 color: AppColors.textSecondary,
