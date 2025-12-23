@@ -234,7 +234,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
                     // Jenis Pertanian Dropdown
                     DropdownButtonFormField<String>(
-                      value: _selectedFarmType,
+                      initialValue: _selectedFarmType,
                       decoration: InputDecoration(
                         labelText: 'Jenis Pertanian',
                         prefixIcon: Icon(Icons.grass_outlined, color: AppColors.primary),

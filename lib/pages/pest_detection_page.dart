@@ -17,7 +17,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
   late PestApiService _apiService;
   Timer? _pollTimer;
   Set<int> _processedIds = {};
-  Map<int, Uint8List> _imageCache = {};
+  final Map<int, Uint8List> _imageCache = {};
 
   // System Status
   bool isSystemConnected = false;
@@ -1334,7 +1334,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                 _disableSystem();
               }
             },
-            activeColor: AppColors.success,
+            activeThumbColor: AppColors.success,
           ),
         ],
       ),

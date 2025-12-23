@@ -563,7 +563,7 @@ class _IrrigationPageState extends State<IrrigationPage> {
           Switch(
             value: isActive,
             onChanged: (value) {},
-            activeColor: AppColors.primary,
+            activeThumbColor: AppColors.primary,
           ),
         ],
       ),
