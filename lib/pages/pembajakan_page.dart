@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:smart_farming/theme/app_colors.dart';
 
 class PembajakanPage extends StatelessWidget {
   const PembajakanPage({Key? key}) : super(key: key);
@@ -6,20 +7,22 @@ class PembajakanPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: AppColors.background, // Cream
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: Colors.green[700],
+        backgroundColor: AppColors.background,
+        foregroundColor: AppColors.accent, // Deep Teal
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: AppColors.accent),
+          onPressed: () => Navigator.pop(context),
+        ),
         title: const Text(
           'Pembajakan Lahan',
           style: TextStyle(
             fontWeight: FontWeight.bold,
-            color: Colors.white,
+            fontSize: 18,
+            color: AppColors.accent,
           ),
-        ),
-        leading: IconButton(
-          icon: const Icon(Icons.ice_skating, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
         ),
       ),
       body: SingleChildScrollView(
@@ -31,7 +34,7 @@ class PembajakanPage extends StatelessWidget {
               width: double.infinity,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Colors.green[700]!, Colors.green[500]!],
+                  colors: [AppColors.primary, AppColors.secondary],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -73,19 +76,21 @@ class PembajakanPage extends StatelessWidget {
                 children: [
                   Expanded(
                     child: _buildStatCard(
+                      context,
                       'Total Lahan',
                       '2.5 Ha',
                       Icons.landscape,
-                      Colors.blue[400]!,
+                      AppColors.info,
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: _buildStatCard(
+                      context,
                       'Sudah Dibajak',
                       '1.2 Ha',
                       Icons.check_circle,
-                      Colors.green[400]!,
+                      AppColors.primary,
                     ),
                   ),
                 ],
@@ -111,7 +116,7 @@ class PembajakanPage extends StatelessWidget {
                     ),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green[700],
+                    backgroundColor: AppColors.primary,
                     foregroundColor: Colors.white,
                     elevation: 2,
                     shape: RoundedRectangleBorder(
@@ -130,7 +135,7 @@ class PembajakanPage extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: Colors.black87,
+                  color: AppColors.textPrimary,
                 ),
               ),
             ),
@@ -145,7 +150,7 @@ class PembajakanPage extends StatelessWidget {
                     '0.8 Ha',
                     '10 Jan 2026',
                     'Selesai',
-                    Colors.green,
+                    AppColors.primary,
                     Icons.check_circle,
                   ),
                   const SizedBox(height: 12),
@@ -154,7 +159,7 @@ class PembajakanPage extends StatelessWidget {
                     '0.4 Ha',
                     '12 Jan 2026',
                     'Dalam Proses',
-                    Colors.orange,
+                    AppColors.warning,
                     Icons.agriculture,
                   ),
                   const SizedBox(height: 12),
@@ -163,7 +168,7 @@ class PembajakanPage extends StatelessWidget {
                     '1.3 Ha',
                     '15 Jan 2026',
                     'Dijadwalkan',
-                    Colors.blue,
+                    AppColors.info,
                     Icons.schedule,
                   ),
                   const SizedBox(height: 24),
@@ -176,24 +181,39 @@ class PembajakanPage extends StatelessWidget {
     );
   }
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+  Widget _buildStatCard(
+      BuildContext context,
+      String title,
+      String value,
+      IconData icon,
+      Color color,
+      ) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
+        color: AppColors.surfaceVariant,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.divider.withOpacity(0.5)),
+        boxShadow: const [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
+            color: AppColors.shadow,
+            blurRadius: 8,
+            offset: Offset(0, 3),
           ),
         ],
       ),
       child: Column(
         children: [
-          Icon(icon, color: color, size: 32),
-          const SizedBox(height: 8),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(height: 12),
           Text(
             value,
             style: TextStyle(
@@ -205,9 +225,9 @@ class PembajakanPage extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             title,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 12,
-              color: Colors.grey[600],
+              color: AppColors.textSecondary,
             ),
             textAlign: TextAlign.center,
           ),
@@ -226,13 +246,14 @@ class PembajakanPage extends StatelessWidget {
       ) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
+        color: AppColors.surfaceVariant,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.divider.withOpacity(0.5)),
+        boxShadow: const [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
+            color: AppColors.shadow,
+            blurRadius: 8,
+            offset: Offset(0, 3),
           ),
         ],
       ),
@@ -244,8 +265,8 @@ class PembajakanPage extends StatelessWidget {
               width: 50,
               height: 50,
               decoration: BoxDecoration(
-                color: statusColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
+                color: statusColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
                 statusIcon,
@@ -263,29 +284,29 @@ class PembajakanPage extends StatelessWidget {
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
-                      color: Colors.black87,
+                      color: AppColors.textPrimary,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
                   Row(
                     children: [
-                      Icon(Icons.crop_square, size: 14, color: Colors.grey[600]),
+                      Icon(Icons.crop_square, size: 14, color: AppColors.textSecondary),
                       const SizedBox(width: 4),
                       Text(
                         luas,
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 13,
-                          color: Colors.grey[600],
+                          color: AppColors.textSecondary,
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
+                      Icon(Icons.calendar_today, size: 14, color: AppColors.textSecondary),
                       const SizedBox(width: 4),
                       Text(
                         tanggal,
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 13,
-                          color: Colors.grey[600],
+                          color: AppColors.textSecondary,
                         ),
                       ),
                     ],
@@ -294,11 +315,11 @@ class PembajakanPage extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
-                      vertical: 4,
+                      vertical: 5,
                     ),
                     decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(6),
+                      color: statusColor.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       status,
@@ -314,7 +335,7 @@ class PembajakanPage extends StatelessWidget {
             ),
             Icon(
               Icons.chevron_right,
-              color: Colors.grey[400],
+              color: AppColors.textTertiary,
             ),
           ],
         ),
