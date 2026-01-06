@@ -1,6 +1,7 @@
 // lib/widgets/app_drawer.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:smart_farming/pages/pembajakan_page.dart';
 import 'package:smart_farming/pages/weather_page.dart';
 import 'package:smart_farming/theme/app_colors.dart';
 import 'package:smart_farming/cubit/auth/auth_cubit.dart';
@@ -137,9 +138,14 @@ class AppDrawer extends StatelessWidget {
                       icon: Icons.agriculture,
                       title: 'Pembajakan',
                       onTap: () {
-                        // TODO: Navigate to status page
                         Navigator.pop(context);
-                      },
+                        Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const PembajakanPage(),
+                            ),
+                        );
+                        }
                       ),
                     _DrawerItem(
                       icon: Icons.history,
