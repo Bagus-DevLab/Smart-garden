@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'dart:math' as math;
 import 'package:smart_farming/theme/app_colors.dart';
 
 class PlantHealthPage extends StatefulWidget {
@@ -13,7 +12,13 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
   // Sensor Data
   double phValue = 6.5;
   double soilMoisture = 72.0;
-  double ultrasonicDistance = 45.0; // cm (jarak air dari sensor)
+  
+  // Fertilizer Pump Status
+  bool isPumpActive = false;
+  double fertilizerLevel = 65.0; // Persentase level pupuk cair di tangki
+  int pumpRuntime = 0; // Waktu pompa berjalan dalam detik
+  DateTime? lastFertilizeTime;
+  
   String plantStatus = 'Sehat';
   Color plantStatusColor = AppColors.success;
 
@@ -23,6 +28,7 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
   @override
   void initState() {
     super.initState();
+    lastFertilizeTime = DateTime.now().subtract(Duration(hours: 2));
     _analyzeHealthStatus();
   }
 
@@ -71,21 +77,34 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
       plantStatusColor = AppColors.warning;
     }
 
-    // Analyze Water Level
-    if (ultrasonicDistance < 20) {
+    // Analyze Fertilizer Level
+    if (fertilizerLevel < 20) {
       recommendations.add({
-        'title': 'Tangki Air Penuh',
-        'description': 'Level air optimal untuk irigasi',
-        'icon': Icons.check_circle,
-        'color': AppColors.success,
-      });
-    } else if (ultrasonicDistance > 70) {
-      recommendations.add({
-        'title': 'Tangki Air Rendah',
-        'description': 'Segera isi ulang tangki air',
-        'icon': Icons.water,
+        'title': 'Pupuk Cair Hampir Habis',
+        'description': 'Segera isi ulang tangki pupuk cair',
+        'icon': Icons.local_drink,
         'color': AppColors.error,
       });
+    } else if (fertilizerLevel < 40) {
+      recommendations.add({
+        'title': 'Level Pupuk Rendah',
+        'description': 'Persiapkan pengisian tangki pupuk',
+        'icon': Icons.info,
+        'color': AppColors.warning,
+      });
+    }
+
+    // Check fertilizer schedule
+    if (lastFertilizeTime != null) {
+      final hoursSinceLastFertilize = DateTime.now().difference(lastFertilizeTime!).inHours;
+      if (hoursSinceLastFertilize > 24 && !isPumpActive) {
+        recommendations.add({
+          'title': 'Jadwal Pemupukan',
+          'description': 'Sudah ${hoursSinceLastFertilize} jam sejak pemupukan terakhir',
+          'icon': Icons.schedule,
+          'color': AppColors.info,
+        });
+      }
     }
 
     if (recommendations.isEmpty) {
@@ -98,6 +117,40 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
     }
 
     setState(() {});
+  }
+
+  void _toggleFertilizerPump() {
+    setState(() {
+      isPumpActive = !isPumpActive;
+      if (isPumpActive) {
+        lastFertilizeTime = DateTime.now();
+        pumpRuntime = 0;
+        // Simulasi pengurangan level pupuk
+        Future.delayed(Duration(seconds: 1), _updatePumpRuntime);
+      }
+    });
+  }
+
+  void _updatePumpRuntime() {
+    if (isPumpActive && mounted) {
+      setState(() {
+        pumpRuntime++;
+        if (fertilizerLevel > 0) {
+          fertilizerLevel -= 0.5; // Kurangi 0.5% per detik
+          if (fertilizerLevel < 0) fertilizerLevel = 0;
+        }
+        
+        if (fertilizerLevel <= 0) {
+          isPumpActive = false;
+        }
+      });
+      
+      if (isPumpActive) {
+        Future.delayed(Duration(seconds: 1), _updatePumpRuntime);
+      } else {
+        _analyzeHealthStatus();
+      }
+    }
   }
 
   @override
@@ -121,8 +174,8 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
             _buildSensorMonitoring(),
             const SizedBox(height: 20),
 
-            // Water Level Visualization
-            _buildWaterLevelCard(),
+            // Fertilizer Pump Control
+            _buildFertilizerPumpCard(),
             const SizedBox(height: 20),
 
             // Recommendations
@@ -169,7 +222,7 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
                     ),
                   ),
                   Text(
-                    'Monitoring kondisi tanah & tanaman',
+                    'Monitoring kondisi tanah & sistem pemupukan',
                     style: TextStyle(
                       fontSize: 13,
                       color: AppColors.textSecondary,
@@ -484,24 +537,9 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
     );
   }
 
-  Widget _buildWaterLevelCard() {
-    final waterPercentage = (1 - (ultrasonicDistance / 100)).clamp(0.0, 1.0);
-    final waterLevel = (waterPercentage * 100).toInt();
-
-    Color levelColor;
-    String levelStatus;
-
-    if (waterLevel > 70) {
-      levelColor = AppColors.success;
-      levelStatus = 'Penuh';
-    } else if (waterLevel > 30) {
-      levelColor = AppColors.warning;
-      levelStatus = 'Sedang';
-    } else {
-      levelColor = AppColors.error;
-      levelStatus = 'Rendah';
-    }
-
+  Widget _buildFertilizerPumpCard() {
+    Color statusColor = isPumpActive ? AppColors.success : AppColors.textSecondary;
+    
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -526,28 +564,33 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: AppColors.info.withOpacity(0.1),
+                      color: AppColors.success.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Icon(Icons.water, color: AppColors.info, size: 24),
+                    child: Icon(
+                      Icons.local_florist,
+                      color: AppColors.success,
+                      size: 24,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Level Air (Ultrasonik)',
+                        'Pompa Pupuk Cair',
                         style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
                           color: AppColors.textPrimary,
                         ),
                       ),
                       Text(
-                        'Jarak sensor: ${ultrasonicDistance.toStringAsFixed(1)} cm',
+                        isPumpActive ? 'Aktif - Sedang Memompa' : 'Tidak Aktif',
                         style: TextStyle(
                           fontSize: 12,
-                          color: AppColors.textSecondary,
+                          color: statusColor,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],
@@ -555,133 +598,249 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
                 ],
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                width: 56,
+                height: 32,
                 decoration: BoxDecoration(
-                  color: levelColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
+                  color: isPumpActive ? AppColors.success : AppColors.textTertiary,
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                child: Text(
-                  levelStatus,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: levelColor,
-                  ),
+                child: Stack(
+                  children: [
+                    AnimatedPositioned(
+                      duration: Duration(milliseconds: 200),
+                      left: isPumpActive ? 28 : 4,
+                      top: 4,
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.2),
+                              blurRadius: 4,
+                              offset: Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
           const SizedBox(height: 24),
 
-          // Water Tank Visualization
+          // Pump Stats
           Row(
             children: [
-              // Tank Visual
-              Container(
-                width: 80,
-                height: 140,
-                decoration: BoxDecoration(
-                  border: Border.all(color: AppColors.info, width: 3),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Stack(
-                  alignment: Alignment.bottomCenter,
-                  children: [
-                    Container(
-                      height: 140 * waterPercentage,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            levelColor.withOpacity(0.3),
-                            levelColor.withOpacity(0.6),
-                          ],
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                        ),
-                        borderRadius: BorderRadius.only(
-                          bottomLeft: Radius.circular(9),
-                          bottomRight: Radius.circular(9),
-                        ),
-                      ),
-                    ),
-                    // Waves effect
-                    Positioned(
-                      bottom: 140 * waterPercentage - 5,
-                      child: CustomPaint(
-                        size: Size(80, 10),
-                        painter: WavePainter(levelColor),
-                      ),
-                    ),
-                  ],
+              Expanded(
+                child: _buildPumpStat(
+                  Icons.timer,
+                  'Waktu Jalan',
+                  '${pumpRuntime}s',
+                  AppColors.primary,
                 ),
               ),
-              const SizedBox(width: 24),
-
-              // Info
+              const SizedBox(width: 16),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$waterLevel%',
-                      style: TextStyle(
-                        fontSize: 48,
-                        fontWeight: FontWeight.bold,
-                        color: levelColor,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Kapasitas Tangki',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _buildWaterInfo(
-                      Icons.height,
-                      'Tinggi Air',
-                      '${(100 - ultrasonicDistance).toStringAsFixed(0)} cm',
-                    ),
-                    const SizedBox(height: 8),
-                    _buildWaterInfo(
-                      Icons.local_drink,
-                      'Estimasi Volume',
-                      '${(waterLevel * 2).toStringAsFixed(0)} Liter',
-                    ),
-                  ],
+                child: _buildPumpStat(
+                  Icons.history,
+                  'Terakhir',
+                  lastFertilizeTime != null 
+                      ? _formatLastFertilize(lastFertilizeTime!)
+                      : '-',
+                  AppColors.info,
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 20),
+
+          // Fertilizer Level
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Level Pupuk Cair',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  Text(
+                    '${fertilizerLevel.toStringAsFixed(0)}%',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: _getFertilizerLevelColor(),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Stack(
+                  children: [
+                    Container(
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: AppColors.textTertiary.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    FractionallySizedBox(
+                      widthFactor: fertilizerLevel / 100,
+                      child: Container(
+                        height: 16,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              _getFertilizerLevelColor(),
+                              _getFertilizerLevelColor().withOpacity(0.7),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Estimasi: ${(fertilizerLevel * 1.5).toStringAsFixed(0)} liter tersisa',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // Control Button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: fertilizerLevel > 0 ? _toggleFertilizerPump : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isPumpActive ? AppColors.error : AppColors.success,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: isPumpActive ? 4 : 2,
+              ),
+              icon: Icon(
+                isPumpActive ? Icons.stop : Icons.play_arrow,
+                size: 24,
+              ),
+              label: Text(
+                isPumpActive ? 'Hentikan Pompa' : 'Jalankan Pompa',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          
+          if (fertilizerLevel <= 0) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.error.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.error.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning, color: AppColors.error, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Tangki pupuk kosong! Isi ulang sebelum menggunakan pompa.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.error,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPumpStat(IconData icon, String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildWaterInfo(IconData icon, String label, String value) {
-    return Row(
-      children: [
-        Icon(icon, size: 16, color: AppColors.textSecondary),
-        const SizedBox(width: 8),
-        Text(
-          '$label: ',
-          style: TextStyle(
-            fontSize: 12,
-            color: AppColors.textSecondary,
-          ),
-        ),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
-          ),
-        ),
-      ],
-    );
+  Color _getFertilizerLevelColor() {
+    if (fertilizerLevel > 60) return AppColors.success;
+    if (fertilizerLevel > 30) return AppColors.warning;
+    return AppColors.error;
+  }
+
+  String _formatLastFertilize(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 60) {
+      return '${diff.inMinutes}m lalu';
+    } else if (diff.inHours < 24) {
+      return '${diff.inHours}j lalu';
+    } else {
+      return '${diff.inDays}h lalu';
+    }
   }
 
   Widget _buildRecommendations() {
@@ -798,19 +957,20 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
   }
 
   Widget _buildChartLegend() {
-    return Row(
+    return Wrap(
+      spacing: 16,
+      runSpacing: 8,
       children: [
         _buildLegendItem(AppColors.warning, 'pH'),
-        const SizedBox(width: 16),
         _buildLegendItem(AppColors.primary, 'Kelembaban'),
-        const SizedBox(width: 16),
-        _buildLegendItem(AppColors.info, 'Level Air'),
+        _buildLegendItem(AppColors.success, 'Pemupukan'),
       ],
     );
   }
 
   Widget _buildLegendItem(Color color, String label) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           width: 12,
@@ -851,39 +1011,6 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
   }
 }
 
-// Custom Painter for Wave Effect
-class WavePainter extends CustomPainter {
-  final Color color;
-
-  WavePainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color.withOpacity(0.8)
-      ..style = PaintingStyle.fill;
-
-    final path = Path();
-    path.moveTo(0, size.height / 2);
-
-    for (double i = 0; i <= size.width; i++) {
-      path.lineTo(
-        i,
-        size.height / 2 + math.sin((i / size.width) * 2 * math.pi) * 3,
-      );
-    }
-
-    path.lineTo(size.width, size.height);
-    path.lineTo(0, size.height);
-    path.close();
-
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
 // Simple Chart Painter
 class SimpleChartPainter extends CustomPainter {
   @override
@@ -895,7 +1022,7 @@ class SimpleChartPainter extends CustomPainter {
     // Sample data points for 7 days
     final phData = [6.2, 6.4, 6.5, 6.3, 6.5, 6.6, 6.5];
     final moistureData = [65.0, 68.0, 72.0, 70.0, 72.0, 75.0, 72.0];
-    final waterData = [85.0, 80.0, 75.0, 70.0, 65.0, 55.0, 45.0];
+    final fertilizerData = [90.0, 85.0, 80.0, 75.0, 70.0, 68.0, 65.0];
 
     // Draw pH line
     paint.color = AppColors.warning;
@@ -905,9 +1032,9 @@ class SimpleChartPainter extends CustomPainter {
     paint.color = AppColors.primary;
     _drawLine(canvas, size, moistureData, 0, 100, paint);
 
-    // Draw water level line
-    paint.color = AppColors.info;
-    _drawLine(canvas, size, waterData, 0, 100, paint);
+    // Draw fertilizer level line
+    paint.color = AppColors.success;
+    _drawLine(canvas, size, fertilizerData, 0, 100, paint);
   }
 
   void _drawLine(Canvas canvas, Size size, List<double> data,
