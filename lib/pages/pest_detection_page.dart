@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/pest_api_service.dart';
+import 'pest_gallery_page.dart';
 
 class PestDetectionPage extends StatefulWidget {
   const PestDetectionPage({super.key});
@@ -13,23 +14,19 @@ class PestDetectionPage extends StatefulWidget {
 }
 
 class _PestDetectionPageState extends State<PestDetectionPage> {
-  // API Service
   late PestApiService _apiService;
   Timer? _pollTimer;
   Set<int> _processedIds = {};
   Map<int, Uint8List> _imageCache = {};
 
-  // System Status
   bool isSystemConnected = false;
   bool isSystemEnabled = true;
   String _connectionStatus = 'Connecting';
 
-  // Pest Status
   String overallStatus = 'Aman';
   Color statusColor = AppColors.success;
   int totalDetections = 0;
 
-  // Latest Detections
   List<PestDetection> recentDetections = [];
   String _lastDetectionTime = '-';
 
@@ -46,12 +43,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
     super.dispose();
   }
 
-  // =========================================================================
-  // INITIALIZATION
-  // =========================================================================
-
   Future<void> _initializeApp() async {
     await _loadApiUrl();
+    await _testConnection(); // ✅ Test connection dulu
     await _loadHistory();
     if (isSystemEnabled) {
       _startPolling();
@@ -64,9 +58,14 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
       final savedUrl = prefs.getString('api_url');
       if (savedUrl != null && savedUrl.isNotEmpty) {
         _apiService.updateApiUrl(savedUrl);
+        debugPrint('✅ Loaded API URL: $savedUrl');
+      } else {
+        // Set default URL baru
+        await prefs.setString('api_url', 'https://pestdetectionapi-production.up.railway.app');
+        debugPrint('✅ Set default API URL');
       }
     } catch (e) {
-      debugPrint('Load API URL error: $e');
+      debugPrint('❌ Load API URL error: $e');
     }
   }
 
@@ -75,14 +74,48 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('api_url', url);
       _apiService.updateApiUrl(url);
+      debugPrint('✅ Saved API URL: $url');
     } catch (e) {
-      debugPrint('Save API URL error: $e');
+      debugPrint('❌ Save API URL error: $e');
     }
   }
 
-  // =========================================================================
-  // API CALLS
-  // =========================================================================
+  // ✅ NEW: Test connection ke API
+  Future<void> _testConnection() async {
+    try {
+      final result = await _apiService.testConnection();
+      
+      if (!mounted) return;
+
+      if (result['success'] == true) {
+        setState(() {
+          isSystemConnected = true;
+          _connectionStatus = 'Connected';
+        });
+        
+        final data = result['data'] as Map<String, dynamic>?;
+        if (data != null) {
+          debugPrint('✅ API Status: ${data['status']}');
+          debugPrint('✅ Database: ${data['database']}');
+          debugPrint('✅ MQTT: ${data['mqtt_connected']}');
+          debugPrint('✅ Roboflow: ${data['roboflow_ready']}');
+        }
+      } else {
+        setState(() {
+          isSystemConnected = false;
+          _connectionStatus = 'Error: ${result['message']}';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          isSystemConnected = false;
+          _connectionStatus = 'Connection Failed';
+        });
+      }
+      debugPrint('❌ Test connection error: $e');
+    }
+  }
 
   Future<void> _loadHistory() async {
     if (!isSystemEnabled) {
@@ -108,14 +141,18 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
       });
 
       _cacheImages();
+      
+      debugPrint('✅ Loaded ${detections.length} detections from history');
     } catch (e) {
       if (mounted) {
         setState(() {
           isSystemConnected = false;
-          _connectionStatus = e.toString().contains('timeout') ? 'Timeout' : 'Error';
+          _connectionStatus = e.toString().contains('timeout') 
+              ? 'Timeout' 
+              : 'Error';
         });
       }
-      debugPrint('Load history error: $e');
+      debugPrint('❌ Load history error: $e');
     }
   }
 
@@ -132,12 +169,14 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
 
   void _startPolling() {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _checkNewDetection());
+    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _checkNewDetection());
+    debugPrint('🔄 Polling started');
   }
 
   void _stopPolling() {
     _pollTimer?.cancel();
     _pollTimer = null;
+    debugPrint('⏸️ Polling stopped');
   }
 
   Future<void> _checkNewDetection() async {
@@ -178,7 +217,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _connectionStatus = e.toString().contains('timeout') ? 'Timeout' : 'Disconnected';
+          _connectionStatus = e.toString().contains('timeout') 
+              ? 'Timeout' 
+              : 'Disconnected';
           isSystemConnected = false;
         });
       }
@@ -193,13 +234,11 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
         recentDetections.insert(0, detection);
         _processedIds.add(detection.id);
 
-        // Cache image
         final imageData = _apiService.decodeImage(detection.imageBase64);
         if (imageData != null) {
           _imageCache[detection.id] = imageData;
         }
 
-        // Limit to 50 detections
         if (recentDetections.length > 50) {
           final removed = recentDetections.removeLast();
           _processedIds.remove(removed.id);
@@ -215,7 +254,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
         isError: false,
       );
     } catch (e) {
-      debugPrint('Add detection error: $e');
+      debugPrint('❌ Add detection error: $e');
     }
   }
 
@@ -231,12 +270,12 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
           totalDetections = recentDetections.length;
           _updateAlertStatus();
         });
-        _showSnackBar('Deteksi berhasil dihapus', isError: false);
+        _showSnackBar('✅ Deteksi berhasil dihapus', isError: false);
       } else {
-        _showSnackBar('Gagal menghapus deteksi', isError: true);
+        _showSnackBar('❌ Gagal menghapus deteksi', isError: true);
       }
     } catch (e) {
-      _showSnackBar('Error: ${e.toString()}', isError: true);
+      _showSnackBar('❌ Error: ${e.toString()}', isError: true);
     }
   }
 
@@ -244,7 +283,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
     final count = recentDetections.length;
     
     setState(() {
-      // Logic baru: <1 atau =0 = Aman, >0 dan <2 = Waspada, >=2 = Bahaya
       if (count >= 2) {
         overallStatus = 'Bahaya';
         statusColor = AppColors.error;
@@ -257,10 +295,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
       }
     });
   }
-
-  // =========================================================================
-  // SYSTEM CONTROL
-  // =========================================================================
 
   void _enableSystem() {
     setState(() {
@@ -286,10 +320,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
     
     _showSnackBar('🔴 Sistem monitoring dinonaktifkan', isError: false);
   }
-
-  // =========================================================================
-  // UI HELPERS
-  // =========================================================================
 
   void _showSnackBar(String message, {bool isError = false}) {
     if (!mounted) return;
@@ -341,17 +371,20 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
             TextField(
               controller: controller,
               decoration: InputDecoration(
-                hintText: 'https://web-production-849bb.up.railway.app/',
+                hintText: 'https://pestdetectionapi-production.up.railway.app',
                 prefixIcon: const Icon(Icons.link),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16, 
+                  vertical: 12
+                ),
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              'https://web-production-849bb.up.railway.app/',
+              'Default: https://pestdetectionapi-production.up.railway.app',
               style: TextStyle(
                 fontSize: 11,
                 color: AppColors.textSecondary,
@@ -369,23 +402,30 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
             onPressed: () async {
               final newUrl = controller.text.trim();
               if (newUrl.isEmpty) {
-                _showSnackBar('URL tidak boleh kosong', isError: true);
+                _showSnackBar('❌ URL tidak boleh kosong', isError: true);
                 return;
               }
               
-              if (!newUrl.startsWith('http://') && !newUrl.startsWith('https://')) {
-                _showSnackBar('URL harus dimulai dengan http:// atau https://', isError: true);
+              if (!newUrl.startsWith('http://') && 
+                  !newUrl.startsWith('https://')) {
+                _showSnackBar(
+                  '❌ URL harus dimulai dengan http:// atau https://', 
+                  isError: true
+                );
                 return;
               }
 
               Navigator.pop(context);
               
               await _saveApiUrl(newUrl);
-              _showSnackBar('API URL berhasil disimpan', isError: false);
+              _showSnackBar('✅ API URL berhasil disimpan', isError: false);
               
               setState(() {
                 recentDetections.clear();
+                _connectionStatus = 'Connecting';
               });
+              
+              await _testConnection();
               await _loadHistory();
               
               if (isSystemEnabled) {
@@ -435,7 +475,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
             children: [
               if (_imageCache.containsKey(detection.id))
                 ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20)
+                  ),
                   child: Image.memory(
                     _imageCache[detection.id]!,
                     fit: BoxFit.cover,
@@ -448,7 +490,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                   height: 300,
                   decoration: BoxDecoration(
                     color: AppColors.surfaceVariant,
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(20)
+                    ),
                   ),
                   child: Icon(
                     Icons.bug_report,
@@ -475,9 +519,13 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12, 
+                            vertical: 6
+                          ),
                           decoration: BoxDecoration(
-                            color: _getSeverityColor(detection.confidence).withValues(alpha: 0.1),
+                            color: _getSeverityColor(detection.confidence)
+                                .withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text(
@@ -492,11 +540,23 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    _buildDetailRow(Icons.access_time, 'Waktu', detection.getTimeAgo()),
+                    _buildDetailRow(
+                      Icons.access_time, 
+                      'Waktu', 
+                      detection.getTimeAgo()
+                    ),
                     const SizedBox(height: 8),
-                    _buildDetailRow(Icons.verified, 'Confidence', '${detection.confidence}%'),
+                    _buildDetailRow(
+                      Icons.verified, 
+                      'Confidence', 
+                      '${detection.confidence}%'
+                    ),
                     const SizedBox(height: 8),
-                    _buildDetailRow(Icons.fingerprint, 'ID', '#${detection.id}'),
+                    _buildDetailRow(
+                      Icons.fingerprint, 
+                      'ID', 
+                      '#${detection.id}'
+                    ),
                     const SizedBox(height: 20),
                     Row(
                       children: [
@@ -504,7 +564,10 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                           child: OutlinedButton.icon(
                             onPressed: () {
                               Navigator.pop(context);
-                              _showDeleteDialog(detection.id, detection.pestName);
+                              _showDeleteDialog(
+                                detection.id, 
+                                detection.pestName
+                              );
                             },
                             icon: const Icon(Icons.delete_outline, size: 18),
                             label: const Text('Hapus'),
@@ -569,10 +632,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
     if (confidence >= 70) return AppColors.warning;
     return AppColors.info;
   }
-
-  // =========================================================================
-  // BUILD UI
-  // =========================================================================
 
   @override
   Widget build(BuildContext context) {
@@ -664,7 +723,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                     width: 8,
                     height: 8,
                     decoration: BoxDecoration(
-                      color: isSystemConnected ? AppColors.success : AppColors.error,
+                      color: isSystemConnected 
+                          ? AppColors.success 
+                          : AppColors.error,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -674,7 +735,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: isSystemConnected ? AppColors.success : AppColors.error,
+                      color: isSystemConnected 
+                          ? AppColors.success 
+                          : AppColors.error,
                     ),
                   ),
                 ],
@@ -866,7 +929,11 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
         _buildStatCard(
           icon: Icons.pest_control,
           label: 'Jenis Hama',
-          value: recentDetections.map((d) => d.pestName).toSet().length.toString(),
+          value: recentDetections
+              .map((d) => d.pestName)
+              .toSet()
+              .length
+              .toString(),
           color: AppColors.error,
         ),
         _buildStatCard(
@@ -967,9 +1034,26 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                 color: AppColors.textPrimary,
               ),
             ),
-            if (recentDetections.length > 3)
+            if (recentDetections.isNotEmpty)
               TextButton.icon(
-                onPressed: () {},
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => PestGalleryPage(
+                        detections: recentDetections,
+                        imageCache: _imageCache,
+                        onDelete: _deleteDetection,
+                        apiService: _apiService,
+                      ),
+                    ),
+                  ).then((_) {
+                    // Refresh data setelah kembali dari gallery
+                    if (mounted) {
+                      setState(() {});
+                    }
+                  });
+                },
                 icon: const Icon(Icons.grid_view, size: 16),
                 label: Text('Lihat Semua (${recentDetections.length})'),
               ),
@@ -999,7 +1083,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
       decoration: BoxDecoration(
         color: AppColors.surfaceVariant,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.textTertiary.withValues(alpha: 0.2)),
+        border: Border.all(
+          color: AppColors.textTertiary.withValues(alpha: 0.2)
+        ),
       ),
       child: Center(
         child: Column(
@@ -1057,7 +1143,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
               child: Stack(
                 children: [
                   ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(16)
+                    ),
                     child: _imageCache.containsKey(detection.id)
                         ? Image.memory(
                             _imageCache[detection.id]!,
@@ -1091,7 +1179,10 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                     top: 8,
                     right: 8,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8, 
+                        vertical: 4
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black.withValues(alpha: 0.6),
                         borderRadius: BorderRadius.circular(12),
@@ -1099,7 +1190,11 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.verified, size: 12, color: Colors.white),
+                          const Icon(
+                            Icons.verified, 
+                            size: 12, 
+                            color: Colors.white
+                          ),
                           const SizedBox(width: 4),
                           Text(
                             '${detection.confidence}%',
@@ -1138,7 +1233,10 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                       ),
                       const SizedBox(width: 4),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6, 
+                          vertical: 2
+                        ),
                         decoration: BoxDecoration(
                           color: severityColor.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(8),
@@ -1157,7 +1255,11 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      Icon(Icons.fingerprint, size: 12, color: AppColors.textSecondary),
+                      Icon(
+                        Icons.fingerprint, 
+                        size: 12, 
+                        color: AppColors.textSecondary
+                      ),
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
@@ -1175,7 +1277,11 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      Icon(Icons.access_time, size: 12, color: AppColors.textSecondary),
+                      Icon(
+                        Icons.access_time, 
+                        size: 12, 
+                        color: AppColors.textSecondary
+                      ),
                       const SizedBox(width: 4),
                       Text(
                         detection.getTimeAgo(),
@@ -1295,7 +1401,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
             ),
             child: Icon(
               Icons.power_settings_new,
-              color: isSystemEnabled ? AppColors.success : AppColors.textTertiary,
+              color: isSystemEnabled 
+                  ? AppColors.success 
+                  : AppColors.textTertiary,
               size: 28,
             ),
           ),
@@ -1341,5 +1449,3 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
     );
   }
 }
-
-// don app
