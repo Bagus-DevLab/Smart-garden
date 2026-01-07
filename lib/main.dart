@@ -1,23 +1,36 @@
-// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:smart_farming/widgets/auth_gate.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+
 import 'firebase_options.dart';
+import 'widgets/auth_gate.dart';
 
-import 'package:smart_farming/cubit/auth/auth_cubit.dart';
-import 'package:smart_farming/cubit/navigation_cubit.dart';
-import 'package:smart_farming/services/auth_service.dart';
-import 'package:smart_farming/theme/app_colors.dart';
+import 'cubit/auth/auth_cubit.dart';
+import 'cubit/navigation_cubit.dart';
+import 'cubit/notification/notification_cubit.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  
-  // Initialize Firebase
+import 'services/auth_service.dart';
+import 'services/notification_service.dart';
+
+import 'theme/app_colors.dart';
+
+@pragma('vm:entry-point')
+Future<void> firebaseBgHandler(RemoteMessage message) async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  FirebaseMessaging.onBackgroundMessage(firebaseBgHandler);
+
   runApp(const MyApp());
 }
 
@@ -28,35 +41,39 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiRepositoryProvider(
       providers: [
-        RepositoryProvider(
-          create: (context) => AuthService(),
-        ),
+        RepositoryProvider(create: (_) => AuthService()),
       ],
       child: MultiBlocProvider(
         providers: [
           BlocProvider(
-            create: (context) => AuthCubit(
-              context.read<AuthService>(),
-            )..checkAuthStatus(),
+            create: (context) =>
+            AuthCubit(context.read<AuthService>())..checkAuthStatus(),
           ),
-          BlocProvider(
-            create: (context) => NavigationCubit(),
-          ),
+          BlocProvider(create: (_) => NavigationCubit()),
+          BlocProvider(create: (_) => NotificationCubit()),
         ],
-        child: MaterialApp(
-          title: 'Smart Farming',
-          debugShowCheckedModeBanner: false,
-          theme: ThemeData(
-            primaryColor: AppColors.primary,
-            scaffoldBackgroundColor: AppColors.background,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: AppColors.primary,
-              primary: AppColors.primary,
-              secondary: AppColors.secondary,
-            ),
-            useMaterial3: true,
-          ),
-          home: const AuthGate(),
+        child: Builder(
+          builder: (context) {
+            NotificationService.initFCMListeners(
+              context.read<NotificationCubit>(),
+            );
+
+            return MaterialApp(
+              title: 'Smart Farming',
+              debugShowCheckedModeBanner: false,
+              theme: ThemeData(
+                primaryColor: AppColors.primary,
+                scaffoldBackgroundColor: AppColors.background,
+                colorScheme: ColorScheme.fromSeed(
+                  seedColor: AppColors.primary,
+                  primary: AppColors.primary,
+                  secondary: AppColors.secondary,
+                ),
+                useMaterial3: true,
+              ),
+              home: const AuthGate(),
+            );
+          },
         ),
       ),
     );
