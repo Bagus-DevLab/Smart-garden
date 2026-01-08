@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:smart_farming/theme/app_colors.dart';
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/pest_api_service.dart';
 import 'pest_gallery_page.dart';
@@ -13,7 +14,10 @@ class PestDetectionPage extends StatefulWidget {
   State<PestDetectionPage> createState() => _PestDetectionPageState();
 }
 
-class _PestDetectionPageState extends State<PestDetectionPage> {
+class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true; // ✅ Prevent rebuild when switching tabs
+
   late PestApiService _apiService;
   Timer? _pollTimer;
   Set<int> _processedIds = {};
@@ -21,12 +25,13 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
 
   bool isSystemConnected = false;
   bool isSystemEnabled = true;
-  String _connectionStatus = 'Connecting';
+  bool _isCapturing = false;
+  bool _isInitialized = false; // ✅ Track if data loaded
 
+  String _connectionStatus = 'Connecting';
   String overallStatus = 'Aman';
   Color statusColor = AppColors.success;
   int totalDetections = 0;
-
   List<PestDetection> recentDetections = [];
   String _lastDetectionTime = '-';
 
@@ -43,78 +48,81 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
     super.dispose();
   }
 
-  Future<void> _initializeApp() async {
-    await _loadApiUrl();
-    await _testConnection(); // ✅ Test connection dulu
-    await _loadHistory();
-    if (isSystemEnabled) {
-      _startPolling();
+  // ✅ CACHE DATA TO SHARED PREFERENCES
+  Future<void> _saveCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final data = recentDetections.map((d) => d.toJson()).toList();
+      await prefs.setString('cached_detections', jsonEncode(data));
+      await prefs.setInt('total_detections', totalDetections);
+      await prefs.setString('overall_status', overallStatus);
+      await prefs.setString('last_detection_time', _lastDetectionTime);
+    } catch (e) {
+      debugPrint('❌ Save cache error: $e');
     }
   }
 
-  Future<void> _loadApiUrl() async {
+  // ✅ LOAD CACHED DATA INSTANTLY
+  Future<void> _loadCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final savedUrl = prefs.getString('api_url');
-      if (savedUrl != null && savedUrl.isNotEmpty) {
-        _apiService.updateApiUrl(savedUrl);
-        debugPrint('✅ Loaded API URL: $savedUrl');
-      } else {
-        // Set default URL baru
-        await prefs.setString('api_url', 'https://pestdetectionapi-production.up.railway.app');
-        debugPrint('✅ Set default API URL');
+      final cached = prefs.getString('cached_detections');
+      
+      if (cached != null && mounted) {
+        final List<dynamic> data = jsonDecode(cached);
+        setState(() {
+          recentDetections = data.map((json) => PestDetection.fromJson(json)).toList();
+          _processedIds = recentDetections.map((d) => d.id).toSet();
+          totalDetections = prefs.getInt('total_detections') ?? 0;
+          overallStatus = prefs.getString('overall_status') ?? 'Aman';
+          _lastDetectionTime = prefs.getString('last_detection_time') ?? '-';
+          _updateStatusColor();
+        });
+        _cacheImages();
+        debugPrint('✅ Loaded ${recentDetections.length} cached detections');
       }
     } catch (e) {
-      debugPrint('❌ Load API URL error: $e');
+      debugPrint('❌ Load cache error: $e');
+    }
+  }
+
+  Future<void> _initializeApp() async {
+    await _loadApiUrl();
+    await _loadCache(); // ✅ Load cache first for instant display
+    
+    if (!_isInitialized) {
+      await _testConnection();
+      await _loadHistory(); // ✅ Then refresh from API
+      _isInitialized = true;
+    }
+    
+    if (isSystemEnabled) _startPolling();
+  }
+
+  Future<void> _loadApiUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedUrl = prefs.getString('api_url');
+    if (savedUrl != null && savedUrl.isNotEmpty) {
+      _apiService.updateApiUrl(savedUrl);
+    } else {
+      await prefs.setString('api_url', 'https://pestdetectionapi-production.up.railway.app');
     }
   }
 
   Future<void> _saveApiUrl(String url) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('api_url', url);
-      _apiService.updateApiUrl(url);
-      debugPrint('✅ Saved API URL: $url');
-    } catch (e) {
-      debugPrint('❌ Save API URL error: $e');
-    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('api_url', url);
+    _apiService.updateApiUrl(url);
   }
 
-  // ✅ NEW: Test connection ke API
   Future<void> _testConnection() async {
-    try {
-      final result = await _apiService.testConnection();
-      
-      if (!mounted) return;
+    final result = await _apiService.testConnection();
+    if (!mounted) return;
 
-      if (result['success'] == true) {
-        setState(() {
-          isSystemConnected = true;
-          _connectionStatus = 'Connected';
-        });
-        
-        final data = result['data'] as Map<String, dynamic>?;
-        if (data != null) {
-          debugPrint('✅ API Status: ${data['status']}');
-          debugPrint('✅ Database: ${data['database']}');
-          debugPrint('✅ MQTT: ${data['mqtt_connected']}');
-          debugPrint('✅ Roboflow: ${data['roboflow_ready']}');
-        }
-      } else {
-        setState(() {
-          isSystemConnected = false;
-          _connectionStatus = 'Error: ${result['message']}';
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          isSystemConnected = false;
-          _connectionStatus = 'Connection Failed';
-        });
-      }
-      debugPrint('❌ Test connection error: $e');
-    }
+    setState(() {
+      isSystemConnected = result['success'] == true;
+      _connectionStatus = isSystemConnected ? 'Connected' : 'Error: ${result['message']}';
+    });
   }
 
   Future<void> _loadHistory() async {
@@ -128,7 +136,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
 
     try {
       final detections = await _apiService.fetchHistory(limit: 50);
-      
       if (!mounted) return;
 
       setState(() {
@@ -141,18 +148,14 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
       });
 
       _cacheImages();
-      
-      debugPrint('✅ Loaded ${detections.length} detections from history');
+      await _saveCache(); // ✅ Save to cache
     } catch (e) {
       if (mounted) {
         setState(() {
           isSystemConnected = false;
-          _connectionStatus = e.toString().contains('timeout') 
-              ? 'Timeout' 
-              : 'Error';
+          _connectionStatus = e.toString().contains('timeout') ? 'Timeout' : 'Error';
         });
       }
-      debugPrint('❌ Load history error: $e');
     }
   }
 
@@ -160,9 +163,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
     for (var detection in recentDetections) {
       if (!_imageCache.containsKey(detection.id)) {
         final imageData = _apiService.decodeImage(detection.imageBase64);
-        if (imageData != null) {
-          _imageCache[detection.id] = imageData;
-        }
+        if (imageData != null) _imageCache[detection.id] = imageData;
       }
     }
   }
@@ -170,29 +171,17 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
   void _startPolling() {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _checkNewDetection());
-    debugPrint('🔄 Polling started');
   }
 
   void _stopPolling() {
     _pollTimer?.cancel();
-    _pollTimer = null;
-    debugPrint('⏸️ Polling stopped');
   }
 
   Future<void> _checkNewDetection() async {
-    if (!isSystemEnabled) {
-      if (_connectionStatus != 'Sistem Nonaktif') {
-        setState(() {
-          _connectionStatus = 'Sistem Nonaktif';
-          isSystemConnected = false;
-        });
-      }
-      return;
-    }
+    if (!isSystemEnabled) return;
 
     try {
       final result = await _apiService.checkNewDetection();
-      
       if (!mounted) return;
 
       if (result['success'] == true) {
@@ -208,18 +197,14 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
           final newId = data['id'] as int;
           if (!_processedIds.contains(newId)) {
             final newDetection = _apiService.parseDetection(data);
-            if (newDetection != null) {
-              _addNewDetection(newDetection);
-            }
+            if (newDetection != null) _addNewDetection(newDetection);
           }
         }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _connectionStatus = e.toString().contains('timeout') 
-              ? 'Timeout' 
-              : 'Disconnected';
+          _connectionStatus = e.toString().contains('timeout') ? 'Timeout' : 'Disconnected';
           isSystemConnected = false;
         });
       }
@@ -227,73 +212,57 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
   }
 
   void _addNewDetection(PestDetection detection) {
-    try {
-      if (_processedIds.contains(detection.id) || !mounted) return;
+    if (_processedIds.contains(detection.id) || !mounted) return;
 
-      setState(() {
-        recentDetections.insert(0, detection);
-        _processedIds.add(detection.id);
+    setState(() {
+      recentDetections.insert(0, detection);
+      _processedIds.add(detection.id);
 
-        final imageData = _apiService.decodeImage(detection.imageBase64);
-        if (imageData != null) {
-          _imageCache[detection.id] = imageData;
-        }
+      final imageData = _apiService.decodeImage(detection.imageBase64);
+      if (imageData != null) _imageCache[detection.id] = imageData;
 
-        if (recentDetections.length > 50) {
-          final removed = recentDetections.removeLast();
-          _processedIds.remove(removed.id);
-          _imageCache.remove(removed.id);
-        }
+      if (recentDetections.length > 50) {
+        final removed = recentDetections.removeLast();
+        _processedIds.remove(removed.id);
+        _imageCache.remove(removed.id);
+      }
 
-        totalDetections = recentDetections.length;
-        _updateAlertStatus();
-      });
+      totalDetections = recentDetections.length;
+      _updateAlertStatus();
+    });
 
-      _showSnackBar(
-        '🐛 ${detection.pestName} terdeteksi! (${detection.confidence}%)',
-        isError: false,
-      );
-    } catch (e) {
-      debugPrint('❌ Add detection error: $e');
-    }
+    _saveCache(); // ✅ Save after new detection
+    _showSnackBar('🐛 ${detection.pestName} terdeteksi! (${detection.confidence}%)', isError: false);
   }
 
   Future<void> _deleteDetection(int id) async {
-    try {
-      final success = await _apiService.deleteDetection(id);
+    final success = await _apiService.deleteDetection(id);
 
-      if (success) {
-        setState(() {
-          recentDetections.removeWhere((d) => d.id == id);
-          _processedIds.remove(id);
-          _imageCache.remove(id);
-          totalDetections = recentDetections.length;
-          _updateAlertStatus();
-        });
-        _showSnackBar('✅ Deteksi berhasil dihapus', isError: false);
-      } else {
-        _showSnackBar('❌ Gagal menghapus deteksi', isError: true);
-      }
-    } catch (e) {
-      _showSnackBar('❌ Error: ${e.toString()}', isError: true);
+    if (success) {
+      setState(() {
+        recentDetections.removeWhere((d) => d.id == id);
+        _processedIds.remove(id);
+        _imageCache.remove(id);
+        totalDetections = recentDetections.length;
+        _updateAlertStatus();
+      });
+      await _saveCache(); // ✅ Save after delete
+      _showSnackBar('✅ Deteksi berhasil dihapus', isError: false);
+    } else {
+      _showSnackBar('❌ Gagal menghapus deteksi', isError: true);
     }
   }
 
   void _updateAlertStatus() {
     final count = recentDetections.length;
-    
-    setState(() {
-      if (count >= 2) {
-        overallStatus = 'Bahaya';
-        statusColor = AppColors.error;
-      } else if (count > 0 && count < 2) {
-        overallStatus = 'Waspada';
-        statusColor = AppColors.warning;
-      } else {
-        overallStatus = 'Aman';
-        statusColor = AppColors.success;
-      }
-    });
+    overallStatus = count >= 2 ? 'Bahaya' : count > 0 ? 'Waspada' : 'Aman';
+    _updateStatusColor();
+  }
+
+  void _updateStatusColor() {
+    statusColor = overallStatus == 'Bahaya' ? AppColors.error 
+                : overallStatus == 'Waspada' ? AppColors.warning 
+                : AppColors.success;
   }
 
   void _enableSystem() {
@@ -301,24 +270,50 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
       isSystemEnabled = true;
       _connectionStatus = 'Connecting';
     });
-    
-    _loadHistory().then((_) {
-      _startPolling();
-    });
-    
+    _loadHistory().then((_) => _startPolling());
     _showSnackBar('🟢 Sistem monitoring diaktifkan', isError: false);
   }
 
   void _disableSystem() {
     _stopPolling();
-    
     setState(() {
       isSystemEnabled = false;
       isSystemConnected = false;
       _connectionStatus = 'Sistem Nonaktif';
     });
-    
     _showSnackBar('🔴 Sistem monitoring dinonaktifkan', isError: false);
+  }
+
+  Future<void> _triggerManualCapture() async {
+    if (_isCapturing || !isSystemConnected || !isSystemEnabled) {
+      _showSnackBar('❌ ${!isSystemConnected ? "Sistem tidak terhubung" : "Sedang mengambil gambar..."}', isError: true);
+      return;
+    }
+
+    setState(() => _isCapturing = true);
+
+    try {
+      _showSnackBar('📸 Mengirim perintah capture...', isError: false);
+      final success = await _apiService.triggerCapture();
+
+      if (success) {
+        _showSnackBar('✅ Capture berhasil! Menunggu hasil deteksi...', isError: false);
+        await Future.delayed(const Duration(seconds: 2));
+        
+        for (int i = 0; i < 5; i++) {
+          await Future.delayed(const Duration(seconds: 2));
+          await _checkNewDetection();
+        }
+        
+        await _loadHistory();
+      } else {
+        _showSnackBar('❌ Gagal mengirim perintah capture', isError: true);
+      }
+    } catch (e) {
+      _showSnackBar('❌ Error: ${e.toString()}', isError: true);
+    } finally {
+      if (mounted) setState(() => _isCapturing = false);
+    }
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
@@ -327,11 +322,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
       SnackBar(
         content: Row(
           children: [
-            Icon(
-              isError ? Icons.error_outline : Icons.check_circle_outline,
-              color: Colors.white,
-              size: 20,
-            ),
+            Icon(isError ? Icons.error_outline : Icons.check_circle_outline, color: Colors.white, size: 20),
             const SizedBox(width: 12),
             Expanded(child: Text(message)),
           ],
@@ -363,60 +354,30 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Masukkan URL API Server:',
-              style: TextStyle(fontSize: 13),
-            ),
+            const Text('Masukkan URL API Server:', style: TextStyle(fontSize: 13)),
             const SizedBox(height: 12),
             TextField(
               controller: controller,
               decoration: InputDecoration(
                 hintText: 'https://pestdetectionapi-production.up.railway.app',
                 prefixIcon: const Icon(Icons.link),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16, 
-                  vertical: 12
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Default: https://pestdetectionapi-production.up.railway.app',
-              style: TextStyle(
-                fontSize: 11,
-                color: AppColors.textSecondary,
-                fontStyle: FontStyle.italic,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               ),
             ),
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Batal'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
           ElevatedButton(
             onPressed: () async {
               final newUrl = controller.text.trim();
-              if (newUrl.isEmpty) {
-                _showSnackBar('❌ URL tidak boleh kosong', isError: true);
-                return;
-              }
-              
-              if (!newUrl.startsWith('http://') && 
-                  !newUrl.startsWith('https://')) {
-                _showSnackBar(
-                  '❌ URL harus dimulai dengan http:// atau https://', 
-                  isError: true
-                );
+              if (newUrl.isEmpty || (!newUrl.startsWith('http://') && !newUrl.startsWith('https://'))) {
+                _showSnackBar('❌ URL tidak valid', isError: true);
                 return;
               }
 
               Navigator.pop(context);
-              
               await _saveApiUrl(newUrl);
               _showSnackBar('✅ API URL berhasil disimpan', isError: false);
               
@@ -427,37 +388,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
               
               await _testConnection();
               await _loadHistory();
-              
-              if (isSystemEnabled) {
-                _startPolling();
-              }
+              if (isSystemEnabled) _startPolling();
             },
             child: const Text('Simpan'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showDeleteDialog(int id, String pestName) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Hapus Deteksi?'),
-        content: Text('Anda yakin ingin menghapus deteksi "$pestName"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Batal'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _deleteDetection(id);
-            },
-            style: TextButton.styleFrom(foregroundColor: AppColors.error),
-            child: const Text('Hapus'),
           ),
         ],
       ),
@@ -473,34 +406,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (_imageCache.containsKey(detection.id))
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(20)
-                  ),
-                  child: Image.memory(
-                    _imageCache[detection.id]!,
-                    fit: BoxFit.cover,
-                    height: 300,
-                    width: double.infinity,
-                  ),
-                )
-              else
-                Container(
-                  height: 300,
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceVariant,
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(20)
-                    ),
-                  ),
-                  child: Icon(
-                    Icons.bug_report,
-                    size: 80,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              
+              _buildDetailImage(detection),
               Padding(
                 padding: const EdgeInsets.all(20),
                 child: Column(
@@ -509,54 +415,22 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                     Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            detection.pestName,
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
+                          child: Text(detection.pestName, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12, 
-                            vertical: 6
-                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
-                            color: _getSeverityColor(detection.confidence)
-                                .withValues(alpha: 0.1),
+                            color: _getSeverityColor(detection.confidence).withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Text(
-                            '${detection.confidence}%',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: _getSeverityColor(detection.confidence),
-                            ),
-                          ),
+                          child: Text('${detection.confidence}%', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: _getSeverityColor(detection.confidence))),
                         ),
                       ],
                     ),
                     const SizedBox(height: 16),
-                    _buildDetailRow(
-                      Icons.access_time, 
-                      'Waktu', 
-                      detection.getTimeAgo()
-                    ),
+                    _buildDetailRow(Icons.access_time, 'Waktu', detection.getTimeAgo()),
                     const SizedBox(height: 8),
-                    _buildDetailRow(
-                      Icons.verified, 
-                      'Confidence', 
-                      '${detection.confidence}%'
-                    ),
-                    const SizedBox(height: 8),
-                    _buildDetailRow(
-                      Icons.fingerprint, 
-                      'ID', 
-                      '#${detection.id}'
-                    ),
+                    _buildDetailRow(Icons.fingerprint, 'ID', '#${detection.id}'),
                     const SizedBox(height: 20),
                     Row(
                       children: [
@@ -564,10 +438,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                           child: OutlinedButton.icon(
                             onPressed: () {
                               Navigator.pop(context);
-                              _showDeleteDialog(
-                                detection.id, 
-                                detection.pestName
-                              );
+                              _showDeleteDialog(detection.id, detection.pestName);
                             },
                             icon: const Icon(Icons.delete_outline, size: 18),
                             label: const Text('Hapus'),
@@ -582,9 +453,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                         Expanded(
                           child: ElevatedButton(
                             onPressed: () => Navigator.pop(context),
-                            style: ElevatedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
+                            style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
                             child: const Text('Tutup'),
                           ),
                         ),
@@ -600,29 +469,52 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
     );
   }
 
+  void _showDeleteDialog(int id, String pestName) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Hapus Deteksi?'),
+        content: Text('Anda yakin ingin menghapus deteksi "$pestName"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteDetection(id);
+            },
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailImage(PestDetection detection) {
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      child: _imageCache.containsKey(detection.id)
+          ? Image.memory(_imageCache[detection.id]!, fit: BoxFit.cover, height: 300, width: double.infinity)
+          : Container(
+              height: 300,
+              decoration: BoxDecoration(
+                color: AppColors.surfaceVariant,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Icon(Icons.bug_report, size: 80, color: AppColors.textSecondary),
+            ),
+    );
+  }
+
   Widget _buildDetailRow(IconData icon, String label, String value) {
     return Row(
       children: [
         Icon(icon, size: 18, color: AppColors.textSecondary),
         const SizedBox(width: 8),
-        Text(
-          '$label:',
-          style: TextStyle(
-            fontSize: 13,
-            color: AppColors.textSecondary,
-          ),
-        ),
+        Text('$label:', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
         const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            value,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
-          ),
-        ),
+        Expanded(child: Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary))),
       ],
     );
   }
@@ -635,6 +527,8 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // ✅ Required for AutomaticKeepAliveClientMixin
+    
     return Container(
       color: AppColors.background,
       child: RefreshIndicator(
@@ -663,89 +557,48 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
   }
 
   Widget _buildHeader() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.warning.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                Icons.bug_report,
-                color: AppColors.warning,
-                size: 28,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Deteksi Hama',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  Text(
-                    'Monitoring & identifikasi hama padi',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: isSystemConnected 
-                    ? AppColors.success.withValues(alpha: 0.1)
-                    : AppColors.error.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: isSystemConnected 
-                      ? AppColors.success.withValues(alpha: 0.3)
-                      : AppColors.error.withValues(alpha: 0.3),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: isSystemConnected 
-                          ? AppColors.success 
-                          : AppColors.error,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    _connectionStatus,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isSystemConnected 
-                          ? AppColors.success 
-                          : AppColors.error,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: AppColors.warning.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+          child: Icon(Icons.bug_report, color: AppColors.warning, size: 28),
         ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Deteksi Hama', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+              Text('Monitoring & identifikasi hama padi', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+            ],
+          ),
+        ),
+        _buildConnectionBadge(),
       ],
+    );
+  }
+
+  Widget _buildConnectionBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: (isSystemConnected ? AppColors.success : AppColors.error).withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: (isSystemConnected ? AppColors.success : AppColors.error).withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: isSystemConnected ? AppColors.success : AppColors.error, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 8),
+          Text(_connectionStatus, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isSystemConnected ? AppColors.success : AppColors.error)),
+        ],
+      ),
     );
   }
 
@@ -759,13 +612,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: statusColor.withValues(alpha: 0.3),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: statusColor.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))],
       ),
       child: Column(
         children: [
@@ -776,14 +623,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Status Hama Padi',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+                    Text('Status Hama Padi', style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.9), fontWeight: FontWeight.w500)),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -793,57 +633,32 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                           decoration: BoxDecoration(
                             color: Colors.white,
                             shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.white.withValues(alpha: 0.5),
-                                blurRadius: 8,
-                                spreadRadius: 2,
-                              ),
-                            ],
+                            boxShadow: [BoxShadow(color: Colors.white.withValues(alpha: 0.5), blurRadius: 8, spreadRadius: 2)],
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Text(
-                          overallStatus.toUpperCase(),
-                          style: const TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
+                        Text(overallStatus.toUpperCase(), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white)),
                       ],
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      !isSystemEnabled
-                          ? 'Sistem monitoring sedang nonaktif'
-                          : totalDetections >= 2
-                              ? 'Terdeteksi aktivitas hama di beberapa area'
-                              : totalDetections == 1
-                                  ? 'Terdeteksi 1 aktivitas hama'
-                                  : 'Tidak ada deteksi hama saat ini',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.9),
-                      ),
+                      !isSystemEnabled ? 'Sistem monitoring sedang nonaktif'
+                          : totalDetections >= 2 ? 'Terdeteksi aktivitas hama di beberapa area'
+                          : totalDetections == 1 ? 'Terdeteksi 1 aktivitas hama'
+                          : 'Tidak ada deteksi hama saat ini',
+                      style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.9)),
                     ),
                   ],
                 ),
               ),
               Container(
                 padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  shape: BoxShape.circle,
-                ),
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
                 child: Icon(
-                  !isSystemEnabled 
-                      ? Icons.power_settings_new 
-                      : totalDetections >= 2 
-                          ? Icons.warning_amber 
-                          : totalDetections == 1
-                              ? Icons.info_outline
-                              : Icons.check_circle,
+                  !isSystemEnabled ? Icons.power_settings_new
+                      : totalDetections >= 2 ? Icons.warning_amber
+                      : totalDetections == 1 ? Icons.info_outline
+                      : Icons.check_circle,
                   size: 48,
                   color: Colors.white,
                 ),
@@ -853,35 +668,15 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
           const SizedBox(height: 20),
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
+            decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _buildStatusInfo('Total Deteksi', totalDetections.toString()),
-                Container(
-                  width: 1,
-                  height: 30,
-                  color: Colors.white.withValues(alpha: 0.3),
-                ),
+                Container(width: 1, height: 30, color: Colors.white.withValues(alpha: 0.3)),
                 _buildStatusInfo('Status', overallStatus),
-                Container(
-                  width: 1,
-                  height: 30,
-                  color: Colors.white.withValues(alpha: 0.3),
-                ),
-                _buildStatusInfo('Update', _lastDetectionTime != '-' 
-                    ? PestDetection(
-                        id: 0, 
-                        timestamp: _lastDetectionTime, 
-                        imageBase64: '', 
-                        motionDetected: false, 
-                        confidence: 0, 
-                        pestName: ''
-                      ).getTimeAgo().split(' ')[0] 
-                    : '-'),
+                Container(width: 1, height: 30, color: Colors.white.withValues(alpha: 0.3)),
+                _buildStatusInfo('Update', _lastDetectionTime != '-' ? PestDetection(id: 0, timestamp: _lastDetectionTime, imageBase64: '', motionDetected: false, confidence: 0, pestName: '').getTimeAgo().split(' ')[0] : '-'),
               ],
             ),
           ),
@@ -893,30 +688,14 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
   Widget _buildStatusInfo(String label, String value) {
     return Column(
       children: [
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            color: Colors.white.withValues(alpha: 0.9),
-          ),
-        ),
+        Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+        Text(label, style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.9))),
       ],
     );
   }
 
   Widget _buildQuickStats() {
-    final avgConfidence = recentDetections.isEmpty
-        ? 0
-        : (recentDetections.map((d) => d.confidence).reduce((a, b) => a + b) /
-            recentDetections.length).round();
+    final avgConfidence = recentDetections.isEmpty ? 0 : (recentDetections.map((d) => d.confidence).reduce((a, b) => a + b) / recentDetections.length).round();
 
     return GridView.count(
       shrinkWrap: true,
@@ -926,94 +705,33 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
       crossAxisSpacing: 12,
       childAspectRatio: 0.95,
       children: [
-        _buildStatCard(
-          icon: Icons.pest_control,
-          label: 'Jenis Hama',
-          value: recentDetections
-              .map((d) => d.pestName)
-              .toSet()
-              .length
-              .toString(),
-          color: AppColors.error,
-        ),
-        _buildStatCard(
-          icon: Icons.trending_up,
-          label: 'Akurasi',
-          value: '$avgConfidence%',
-          color: AppColors.success,
-        ),
-        _buildStatCard(
-          icon: Icons.access_time,
-          label: 'Update',
-          value: _lastDetectionTime != '-' 
-              ? PestDetection(
-                  id: 0, 
-                  timestamp: _lastDetectionTime, 
-                  imageBase64: '', 
-                  motionDetected: false, 
-                  confidence: 0, 
-                  pestName: ''
-                ).getTimeAgo().split(' ')[0] 
-              : '-',
-          color: AppColors.info,
-        ),
+        _buildStatCard(icon: Icons.pest_control, label: 'Jenis Hama', value: recentDetections.map((d) => d.pestName).toSet().length.toString(), color: AppColors.error),
+        _buildStatCard(icon: Icons.trending_up, label: 'Akurasi', value: '$avgConfidence%', color: AppColors.success),
+        _buildStatCard(icon: Icons.access_time, label: 'Update', value: _lastDetectionTime != '-' ? PestDetection(id: 0, timestamp: _lastDetectionTime, imageBase64: '', motionDetected: false, confidence: 0, pestName: '').getTimeAgo().split(' ')[0] : '-', color: AppColors.info),
       ],
     );
   }
 
-  Widget _buildStatCard({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color color,
-  }) {
+  Widget _buildStatCard({required IconData icon, required String label, required String value, required Color color}) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: AppColors.surfaceVariant,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.shadow,
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: AppColors.shadow, blurRadius: 6, offset: const Offset(0, 2))],
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
             padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
+            decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
             child: Icon(icon, color: color, size: 20),
           ),
           const SizedBox(height: 8),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              value,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
-            ),
-          ),
+          FittedBox(fit: BoxFit.scaleDown, child: Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary))),
           const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: AppColors.textSecondary,
-            ),
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+          Text(label, style: TextStyle(fontSize: 10, color: AppColors.textSecondary), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
         ],
       ),
     );
@@ -1026,53 +744,17 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'Deteksi Terbaru',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
-            ),
+            Text('Deteksi Terbaru', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
             if (recentDetections.isNotEmpty)
               TextButton.icon(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => PestGalleryPage(
-                        detections: recentDetections,
-                        imageCache: _imageCache,
-                        onDelete: _deleteDetection,
-                        apiService: _apiService,
-                      ),
-                    ),
-                  ).then((_) {
-                    // Refresh data setelah kembali dari gallery
-                    if (mounted) {
-                      setState(() {});
-                    }
-                  });
-                },
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => PestGalleryPage(detections: recentDetections, imageCache: _imageCache, onDelete: _deleteDetection, apiService: _apiService))).then((_) { if (mounted) setState(() {}); }),
                 icon: const Icon(Icons.grid_view, size: 16),
                 label: Text('Lihat Semua (${recentDetections.length})'),
               ),
           ],
         ),
         const SizedBox(height: 12),
-        recentDetections.isEmpty
-            ? _buildEmptyState()
-            : SizedBox(
-                height: 270,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: recentDetections.take(10).length,
-                  itemBuilder: (context, index) {
-                    final detection = recentDetections[index];
-                    return _buildDetectionCard(detection);
-                  },
-                ),
-              ),
+        recentDetections.isEmpty ? _buildEmptyState() : SizedBox(height: 270, child: ListView.builder(scrollDirection: Axis.horizontal, itemCount: recentDetections.take(10).length, itemBuilder: (context, index) => _buildDetectionCard(recentDetections[index]))),
       ],
     );
   }
@@ -1083,29 +765,15 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
       decoration: BoxDecoration(
         color: AppColors.surfaceVariant,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppColors.textTertiary.withValues(alpha: 0.2)
-        ),
+        border: Border.all(color: AppColors.textTertiary.withValues(alpha: 0.2)),
       ),
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.pest_control_outlined,
-              size: 48,
-              color: AppColors.textSecondary,
-            ),
+            Icon(Icons.pest_control_outlined, size: 48, color: AppColors.textSecondary),
             const SizedBox(height: 12),
-            Text(
-              !isSystemEnabled 
-                  ? 'Sistem monitoring nonaktif'
-                  : 'Belum ada deteksi hama',
-              style: TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 14,
-              ),
-            ),
+            Text(!isSystemEnabled ? 'Sistem monitoring nonaktif' : 'Belum ada deteksi hama', style: TextStyle(color: AppColors.textSecondary, fontSize: 14)),
           ],
         ),
       ),
@@ -1123,13 +791,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
         decoration: BoxDecoration(
           color: AppColors.surfaceVariant,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.shadow,
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          boxShadow: [BoxShadow(color: AppColors.shadow, blurRadius: 8, offset: const Offset(0, 2))],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1137,73 +799,34 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
           children: [
             Container(
               height: 130,
-              decoration: const BoxDecoration(
-                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-              ),
+              decoration: const BoxDecoration(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
               child: Stack(
                 children: [
                   ClipRRect(
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(16)
-                    ),
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
                     child: _imageCache.containsKey(detection.id)
-                        ? Image.memory(
-                            _imageCache[detection.id]!,
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                            height: double.infinity,
-                          )
+                        ? Image.memory(_imageCache[detection.id]!, fit: BoxFit.cover, width: double.infinity, height: double.infinity)
                         : Container(
                             width: double.infinity,
                             height: double.infinity,
                             decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  severityColor.withValues(alpha: 0.3),
-                                  severityColor.withValues(alpha: 0.6),
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
+                              gradient: LinearGradient(colors: [severityColor.withValues(alpha: 0.3), severityColor.withValues(alpha: 0.6)], begin: Alignment.topLeft, end: Alignment.bottomRight),
                             ),
-                            child: Center(
-                              child: Icon(
-                                Icons.bug_report,
-                                size: 60,
-                                color: Colors.white.withValues(alpha: 0.5),
-                              ),
-                            ),
+                            child: Center(child: Icon(Icons.bug_report, size: 60, color: Colors.white.withValues(alpha: 0.5))),
                           ),
                   ),
                   Positioned(
                     top: 8,
                     right: 8,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8, 
-                        vertical: 4
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(12)),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(
-                            Icons.verified, 
-                            size: 12, 
-                            color: Colors.white
-                          ),
+                          const Icon(Icons.verified, size: 12, color: Colors.white),
                           const SizedBox(width: 4),
-                          Text(
-                            '${detection.confidence}%',
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
+                          Text('${detection.confidence}%', style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.w600)),
                         ],
                       ),
                     ),
@@ -1219,77 +842,29 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
                 children: [
                   Row(
                     children: [
-                      Expanded(
-                        child: Text(
-                          detection.pestName,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.textPrimary,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
+                      Expanded(child: Text(detection.pestName, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis)),
                       const SizedBox(width: 4),
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6, 
-                          vertical: 2
-                        ),
-                        decoration: BoxDecoration(
-                          color: severityColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          detection.getSeverityLabel(),
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w600,
-                            color: severityColor,
-                          ),
-                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(color: severityColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+                        child: Text(detection.getSeverityLabel(), style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: severityColor)),
                       ),
                     ],
                   ),
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      Icon(
-                        Icons.fingerprint, 
-                        size: 12, 
-                        color: AppColors.textSecondary
-                      ),
+                      Icon(Icons.fingerprint, size: 12, color: AppColors.textSecondary),
                       const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          'ID: ${detection.id}',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textSecondary,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
+                      Expanded(child: Text('ID: ${detection.id}', style: TextStyle(fontSize: 11, color: AppColors.textSecondary), maxLines: 1, overflow: TextOverflow.ellipsis)),
                     ],
                   ),
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      Icon(
-                        Icons.access_time, 
-                        size: 12, 
-                        color: AppColors.textSecondary
-                      ),
+                      Icon(Icons.access_time, size: 12, color: AppColors.textSecondary),
                       const SizedBox(width: 4),
-                      Text(
-                        detection.getTimeAgo(),
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: AppColors.textTertiary,
-                        ),
-                      ),
+                      Text(detection.getTimeAgo(), style: TextStyle(fontSize: 10, color: AppColors.textTertiary)),
                     ],
                   ),
                 ],
@@ -1305,34 +880,15 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Tindakan Cepat',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
-        ),
+        Text('Tindakan Cepat', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+        const SizedBox(height: 12),
+        _buildFeaturedCaptureButton(),
         const SizedBox(height: 12),
         Row(
           children: [
-            Expanded(
-              child: _buildActionButton(
-                icon: Icons.refresh,
-                label: 'Refresh',
-                color: AppColors.info,
-                onTap: () => _loadHistory(),
-              ),
-            ),
+            Expanded(child: _buildActionButton(icon: Icons.refresh, label: 'Refresh', color: AppColors.info, onTap: () => _loadHistory())),
             const SizedBox(width: 12),
-            Expanded(
-              child: _buildActionButton(
-                icon: Icons.settings,
-                label: 'Setting API',
-                color: AppColors.textSecondary,
-                onTap: () => _showSettingsDialog(),
-              ),
-            ),
+            Expanded(child: _buildActionButton(icon: Icons.settings, label: 'Setting API', color: AppColors.textSecondary, onTap: () => _showSettingsDialog())),
           ],
         ),
         const SizedBox(height: 16),
@@ -1341,34 +897,59 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
     );
   }
 
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
+  Widget _buildFeaturedCaptureButton() {
+    return InkWell(
+      onTap: isSystemEnabled && isSystemConnected && !_isCapturing ? _triggerManualCapture : null,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: isSystemEnabled && isSystemConnected ? [AppColors.primary, AppColors.primary.withValues(alpha: 0.8)] : [AppColors.textTertiary, AppColors.textTertiary.withValues(alpha: 0.8)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: isSystemEnabled && isSystemConnected ? [BoxShadow(color: AppColors.primary.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))] : [],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), shape: BoxShape.circle),
+              child: _isCapturing ? const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3)) : const Icon(Icons.camera_alt, color: Colors.white, size: 28),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_isCapturing ? 'Mengambil Gambar...' : 'Ambil Gambar Manual', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                  const SizedBox(height: 4),
+                  Text(_isCapturing ? 'Mohon tunggu...' : isSystemEnabled && isSystemConnected ? 'Klik untuk mengambil foto hama' : 'Sistem harus aktif dan terhubung', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.9))),
+                ],
+              ),
+            ),
+            if (!_isCapturing) Icon(Icons.arrow_forward_ios, color: Colors.white.withValues(alpha: 0.9), size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withValues(alpha: 0.3)),
-        ),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withValues(alpha: 0.3))),
         child: Column(
           children: [
             Icon(icon, color: color, size: 28),
             const SizedBox(height: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: color,
-              ),
-            ),
+            Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
           ],
         ),
       ),
@@ -1378,72 +959,26 @@ class _PestDetectionPageState extends State<PestDetectionPage> {
   Widget _buildSystemToggle() {
     return Container(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceVariant,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.shadow,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+      decoration: BoxDecoration(color: AppColors.surfaceVariant, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: AppColors.shadow, blurRadius: 8, offset: const Offset(0, 2))]),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: isSystemEnabled 
-                  ? AppColors.success.withValues(alpha: 0.1)
-                  : AppColors.textTertiary.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              Icons.power_settings_new,
-              color: isSystemEnabled 
-                  ? AppColors.success 
-                  : AppColors.textTertiary,
-              size: 28,
-            ),
+            decoration: BoxDecoration(color: (isSystemEnabled ? AppColors.success : AppColors.textTertiary).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+            child: Icon(Icons.power_settings_new, color: isSystemEnabled ? AppColors.success : AppColors.textTertiary, size: 28),
           ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Sistem Deteksi Hama',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
+                Text('Sistem Deteksi Hama', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
                 const SizedBox(height: 4),
-                Text(
-                  isSystemEnabled 
-                      ? 'Sistem aktif dan memantau area'
-                      : 'Sistem dinonaktifkan',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
+                Text(isSystemEnabled ? 'Sistem aktif dan memantau area' : 'Sistem dinonaktifkan', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
               ],
             ),
           ),
-          Switch(
-            value: isSystemEnabled,
-            onChanged: (value) {
-              if (value) {
-                _enableSystem();
-              } else {
-                _disableSystem();
-              }
-            },
-            activeColor: AppColors.success,
-          ),
+          Switch(value: isSystemEnabled, onChanged: (value) => value ? _enableSystem() : _disableSystem(), activeColor: AppColors.success),
         ],
       ),
     );
