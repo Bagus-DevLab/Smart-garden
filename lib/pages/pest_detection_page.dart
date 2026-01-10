@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/pest_api_service.dart';
 import 'pest_gallery_page.dart';
+import 'package:intl/intl.dart';
 
 class PestDetectionPage extends StatefulWidget {
   const PestDetectionPage({super.key});
@@ -16,7 +17,7 @@ class PestDetectionPage extends StatefulWidget {
 
 class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKeepAliveClientMixin {
   @override
-  bool get wantKeepAlive => true; // ✅ Prevent rebuild when switching tabs
+  bool get wantKeepAlive => true;
 
   late PestApiService _apiService;
   Timer? _pollTimer;
@@ -26,7 +27,13 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
   bool isSystemConnected = false;
   bool isSystemEnabled = true;
   bool _isCapturing = false;
-  bool _isInitialized = false; // ✅ Track if data loaded
+  bool _isInitialized = false;
+  
+  // ✅ ESP32 Status
+  bool _esp32Online = false;
+  String? _esp32LastSeen;
+  // ignore: unused_field
+  int? _esp32LastSeenSeconds;
 
   String _connectionStatus = 'Connecting';
   String overallStatus = 'Aman';
@@ -48,7 +55,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     super.dispose();
   }
 
-  // ✅ CACHE DATA TO SHARED PREFERENCES
   Future<void> _saveCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -62,7 +68,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     }
   }
 
-  // ✅ LOAD CACHED DATA INSTANTLY
   Future<void> _loadCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -88,11 +93,11 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
 
   Future<void> _initializeApp() async {
     await _loadApiUrl();
-    await _loadCache(); // ✅ Load cache first for instant display
+    await _loadCache();
     
     if (!_isInitialized) {
       await _testConnection();
-      await _loadHistory(); // ✅ Then refresh from API
+      await _loadHistory();
       _isInitialized = true;
     }
     
@@ -109,12 +114,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     }
   }
 
-  Future<void> _saveApiUrl(String url) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('api_url', url);
-    _apiService.updateApiUrl(url);
-  }
-
+  // ✅ UPDATE: Test connection dengan ESP32 status
   Future<void> _testConnection() async {
     final result = await _apiService.testConnection();
     if (!mounted) return;
@@ -122,6 +122,16 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     setState(() {
       isSystemConnected = result['success'] == true;
       _connectionStatus = isSystemConnected ? 'Connected' : 'Error: ${result['message']}';
+      
+      // ✅ Parse ESP32 status dari response
+      if (result['success'] == true && result['data'] != null) {
+        final data = result['data'] as Map<String, dynamic>;
+        _esp32Online = data['esp32_online'] == true;
+        _esp32LastSeen = data['esp32_last_seen']?.toString();
+        _esp32LastSeenSeconds = data['esp32_last_seen_seconds_ago'] as int?;
+        
+        debugPrint('🔌 ESP32 Status: $_esp32Online');
+      }
     });
   }
 
@@ -148,7 +158,10 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
       });
 
       _cacheImages();
-      await _saveCache(); // ✅ Save to cache
+      await _saveCache();
+      
+      // ✅ Update ESP32 status after loading history
+      await _updateEsp32Status();
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -156,6 +169,25 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
           _connectionStatus = e.toString().contains('timeout') ? 'Timeout' : 'Error';
         });
       }
+    }
+  }
+
+  // ✅ NEW: Update ESP32 status
+  Future<void> _updateEsp32Status() async {
+    try {
+      final result = await _apiService.testConnection();
+      if (!mounted) return;
+      
+      if (result['success'] == true && result['data'] != null) {
+        final data = result['data'] as Map<String, dynamic>;
+        setState(() {
+          _esp32Online = data['esp32_online'] == true;
+          _esp32LastSeen = data['esp32_last_seen']?.toString();
+          _esp32LastSeenSeconds = data['esp32_last_seen_seconds_ago'] as int?;
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Update ESP32 status error: $e');
     }
   }
 
@@ -170,7 +202,10 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
 
   void _startPolling() {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _checkNewDetection());
+    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      _checkNewDetection();
+      _updateEsp32Status(); // ✅ Update ESP32 status setiap polling
+    });
   }
 
   void _stopPolling() {
@@ -191,6 +226,14 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
           _lastDetectionTime = data['lastDetection']?.toString() ?? '-';
           _connectionStatus = 'Connected';
           isSystemConnected = true;
+          
+          // ✅ Update ESP32 status from /data endpoint
+          if (data['esp32Status'] != null) {
+            final esp32Status = data['esp32Status'] as Map<String, dynamic>;
+            _esp32Online = esp32Status['online'] == true;
+            _esp32LastSeen = esp32Status['lastSeen']?.toString();
+            _esp32LastSeenSeconds = esp32Status['lastSeenSecondsAgo'] as int?;
+          }
         });
 
         if (data['newDetection'] == true && data['id'] != null) {
@@ -231,7 +274,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
       _updateAlertStatus();
     });
 
-    _saveCache(); // ✅ Save after new detection
+    _saveCache();
     _showSnackBar('🐛 ${detection.pestName} terdeteksi! (${detection.confidence}%)', isError: false);
   }
 
@@ -246,7 +289,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
         totalDetections = recentDetections.length;
         _updateAlertStatus();
       });
-      await _saveCache(); // ✅ Save after delete
+      await _saveCache();
       _showSnackBar('✅ Deteksi berhasil dihapus', isError: false);
     } else {
       _showSnackBar('❌ Gagal menghapus deteksi', isError: true);
@@ -332,67 +375,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.all(16),
         duration: Duration(seconds: isError ? 3 : 2),
-      ),
-    );
-  }
-
-  void _showSettingsDialog() {
-    final controller = TextEditingController(text: _apiService.apiUrl);
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(Icons.settings, color: AppColors.primary),
-            const SizedBox(width: 8),
-            const Text('Pengaturan API'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Masukkan URL API Server:', style: TextStyle(fontSize: 13)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              decoration: InputDecoration(
-                hintText: 'https://pestdetectionapi-production.up.railway.app',
-                prefixIcon: const Icon(Icons.link),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
-          ElevatedButton(
-            onPressed: () async {
-              final newUrl = controller.text.trim();
-              if (newUrl.isEmpty || (!newUrl.startsWith('http://') && !newUrl.startsWith('https://'))) {
-                _showSnackBar('❌ URL tidak valid', isError: true);
-                return;
-              }
-
-              Navigator.pop(context);
-              await _saveApiUrl(newUrl);
-              _showSnackBar('✅ API URL berhasil disimpan', isError: false);
-              
-              setState(() {
-                recentDetections.clear();
-                _connectionStatus = 'Connecting';
-              });
-              
-              await _testConnection();
-              await _loadHistory();
-              if (isSystemEnabled) _startPolling();
-            },
-            child: const Text('Simpan'),
-          ),
-        ],
       ),
     );
   }
@@ -525,9 +507,22 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     return AppColors.info;
   }
 
+  // ✅ Format datetime untuk tampilan user-friendly
+  String _formatDateTime(String? datetime) {
+    if (datetime == null || datetime.isEmpty) return '-';
+    
+    try {
+      final dt = DateTime.parse(datetime);
+      // Format: 09 Jan 2026, 14:30
+      return DateFormat('dd MMM yyyy, HH:mm').format(dt);
+    } catch (e) {
+      return datetime;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    super.build(context); // ✅ Required for AutomaticKeepAliveClientMixin
+    super.build(context);
     
     return Container(
       color: AppColors.background,
@@ -540,7 +535,10 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildHeader(),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+              // ✅ NEW: ESP32 Status Card (Fixed)
+              _buildEsp32StatusCard(),
+              const SizedBox(height: 20),
               _buildOverallStatusCard(),
               const SizedBox(height: 20),
               _buildQuickStats(),
@@ -597,6 +595,152 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
           ),
           const SizedBox(width: 8),
           Text(_connectionStatus, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isSystemConnected ? AppColors.success : AppColors.error)),
+        ],
+      ),
+    );
+  }
+
+  // ✅ FIXED: ESP32 Status Card - Tidak bergerak saat update & format datetime lebih mudah dibaca
+  Widget _buildEsp32StatusCard() {
+    final statusColor = _esp32Online ? AppColors.success : AppColors.error;
+    final statusText = _esp32Online ? 'ESP32 Online' : 'ESP32 Offline';
+    
+    // ✅ Format datetime yang lebih user-friendly
+    String lastSeenText = '-';
+    if (_esp32Online) {
+      lastSeenText = 'Aktif sekarang';
+    } else if (_esp32LastSeen != null && _esp32LastSeen!.isNotEmpty) {
+      lastSeenText = _formatDateTime(_esp32LastSeen);
+    } else {
+      lastSeenText = 'Belum pernah terhubung';
+    }
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceVariant,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: statusColor.withValues(alpha: 0.3),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.shadow,
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Status Indicator
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: statusColor.withValues(alpha: 0.3),
+                width: 2,
+              ),
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(
+                  Icons.developer_board,
+                  color: statusColor,
+                  size: 28,
+                ),
+                if (_esp32Online)
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: AppColors.success,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: AppColors.surfaceVariant,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          
+          // Status Info
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
+                        boxShadow: _esp32Online ? [
+                          BoxShadow(
+                            color: statusColor.withValues(alpha: 0.5),
+                            blurRadius: 8,
+                            spreadRadius: 2,
+                          ),
+                        ] : [],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      statusText,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: statusColor,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  lastSeenText,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (!_esp32Online) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Perangkat tidak terhubung',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textTertiary,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          
+          // Status Icon
+          Icon(
+            _esp32Online ? Icons.check_circle : Icons.cancel,
+            color: statusColor,
+            size: 24,
+          ),
         ],
       ),
     );
@@ -883,14 +1027,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
         Text('Tindakan Cepat', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
         const SizedBox(height: 12),
         _buildFeaturedCaptureButton(),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: _buildActionButton(icon: Icons.refresh, label: 'Refresh', color: AppColors.info, onTap: () => _loadHistory())),
-            const SizedBox(width: 12),
-            Expanded(child: _buildActionButton(icon: Icons.settings, label: 'Setting API', color: AppColors.textSecondary, onTap: () => _showSettingsDialog())),
-          ],
-        ),
         const SizedBox(height: 16),
         _buildSystemToggle(),
       ],
@@ -898,19 +1034,24 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
   }
 
   Widget _buildFeaturedCaptureButton() {
+    // ✅ Button disabled if ESP32 is offline
+    final canCapture = isSystemEnabled && isSystemConnected && !_isCapturing && _esp32Online;
+    
     return InkWell(
-      onTap: isSystemEnabled && isSystemConnected && !_isCapturing ? _triggerManualCapture : null,
+      onTap: canCapture ? _triggerManualCapture : null,
       borderRadius: BorderRadius.circular(16),
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: isSystemEnabled && isSystemConnected ? [AppColors.primary, AppColors.primary.withValues(alpha: 0.8)] : [AppColors.textTertiary, AppColors.textTertiary.withValues(alpha: 0.8)],
+            colors: canCapture 
+                ? [AppColors.primary, AppColors.primary.withValues(alpha: 0.8)] 
+                : [AppColors.textTertiary, AppColors.textTertiary.withValues(alpha: 0.8)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(16),
-          boxShadow: isSystemEnabled && isSystemConnected ? [BoxShadow(color: AppColors.primary.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))] : [],
+          boxShadow: canCapture ? [BoxShadow(color: AppColors.primary.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))] : [],
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -918,38 +1059,40 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), shape: BoxShape.circle),
-              child: _isCapturing ? const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3)) : const Icon(Icons.camera_alt, color: Colors.white, size: 28),
+              child: _isCapturing 
+                  ? const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3)) 
+                  : Icon(
+                      canCapture ? Icons.camera_alt : Icons.camera_alt_outlined,
+                      color: Colors.white, 
+                      size: 28,
+                    ),
             ),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(_isCapturing ? 'Mengambil Gambar...' : 'Ambil Gambar Manual', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                  Text(
+                    _isCapturing ? 'Mengambil Gambar...' : 'Ambil Gambar Manual', 
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
                   const SizedBox(height: 4),
-                  Text(_isCapturing ? 'Mohon tunggu...' : isSystemEnabled && isSystemConnected ? 'Klik untuk mengambil foto hama' : 'Sistem harus aktif dan terhubung', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.9))),
+                  Text(
+                    _isCapturing 
+                        ? 'Mohon tunggu...' 
+                        : !isSystemEnabled 
+                            ? 'Sistem harus diaktifkan'
+                            : !isSystemConnected
+                                ? 'API tidak terhubung'
+                                : !_esp32Online
+                                    ? 'ESP32 tidak terhubung'
+                                    : 'Klik untuk mengambil foto hama',
+                    style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.9)),
+                  ),
                 ],
               ),
             ),
             if (!_isCapturing) Icon(Icons.arrow_forward_ios, color: Colors.white.withValues(alpha: 0.9), size: 20),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionButton({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withValues(alpha: 0.3))),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 28),
-            const SizedBox(height: 8),
-            Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
           ],
         ),
       ),
