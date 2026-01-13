@@ -1,5 +1,9 @@
 name: Release Flutter APK
 
+permissions:
+  contents: write
+
+
 on:
   push:
     tags:
