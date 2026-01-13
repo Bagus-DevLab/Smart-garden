@@ -11,6 +11,7 @@ class PestDetection {
   final bool motionDetected;
   final int confidence;
   final String pestName;
+  final List<String> pestNames;
 
   PestDetection({
     required this.id,
@@ -19,119 +20,115 @@ class PestDetection {
     required this.motionDetected,
     required this.confidence,
     required this.pestName,
-  });
+    List<String>? pestNames,
+  }) : pestNames = pestNames ?? [pestName];
 
   factory PestDetection.fromJson(Map<String, dynamic> json) {
-    // Debug print untuk melihat struktur JSON
     debugPrint('🔍 JSON Data: ${json.toString()}');
     
-    // Prioritas pengambilan nama hama dengan lebih banyak variasi:
-    String getPestName() {
-      // List semua kemungkinan key untuk pest name
-      final possibleKeys = [
-        'pestName',      // camelCase
-        'pest_name',     // snake_case
-        'name',          // simple
-        'pest',          // alternative
-        'class',         // dari model detection
-        'class_name',    // dari model detection
-        'className',     // camelCase variant
-        'label',         // dari model detection
-        'prediction',    // dari model detection
-        'detected_pest', // alternative
-      ];
+    List<String> parsePestNames() {
+      if (json.containsKey('pestNames') && json['pestNames'] is List) {
+        final names = (json['pestNames'] as List)
+            .map((e) => e.toString())
+            .where((name) => name.isNotEmpty && name.toLowerCase() != 'unknown')
+            .toList();
+        if (names.isNotEmpty) return names;
+      }
 
-      // Cari key yang ada dan memiliki value
-      for (final key in possibleKeys) {
-        if (json.containsKey(key)) {
-          final value = json[key];
-          if (value != null && value.toString().trim().isNotEmpty) {
-            final pestName = value.toString().trim();
-            // Pastikan bukan string "unknown" atau "null"
-            if (pestName.toLowerCase() != 'unknown' && 
-                pestName.toLowerCase() != 'null' &&
-                pestName != '0') {
-              debugPrint('✅ Pest name found: $pestName (from key: $key)');
-              return pestName;
-            }
+      if (json.containsKey('pest_names') && json['pest_names'] is List) {
+        final names = (json['pest_names'] as List)
+            .map((e) => e.toString())
+            .where((name) => name.isNotEmpty && name.toLowerCase() != 'unknown')
+            .toList();
+        if (names.isNotEmpty) return names;
+      }
+
+      if (json.containsKey('pestName') && json['pestName'] != null) {
+        final pestName = json['pestName'].toString().trim();
+        if (pestName.isNotEmpty && pestName.toLowerCase() != 'unknown') {
+          if (pestName.contains(',')) {
+            return pestName.split(',').map((e) => e.trim()).toList();
           }
+          return [pestName];
         }
       }
 
-      // Jika tidak ada yang ditemukan, cek nested objects
-      if (json.containsKey('detection')) {
-        final detection = json['detection'];
-        if (detection is Map<String, dynamic>) {
-          final nestedName = getPestNameFromMap(detection);
-          if (nestedName != 'Unknown Pest') {
-            return nestedName;
-          }
+      if (json.containsKey('pest_name') && json['pest_name'] != null) {
+        final pestName = json['pest_name'].toString().trim();
+        if (pestName.isNotEmpty && pestName.toLowerCase() != 'unknown') {
+          return [pestName];
         }
       }
 
-      if (json.containsKey('result')) {
-        final result = json['result'];
-        if (result is Map<String, dynamic>) {
-          final nestedName = getPestNameFromMap(result);
-          if (nestedName != 'Unknown Pest') {
-            return nestedName;
+      if (json.containsKey('pest_details')) {
+        try {
+          final pestDetails = json['pest_details'];
+          List<dynamic> details = [];
+          
+          if (pestDetails is String) {
+            details = jsonDecode(pestDetails) as List;
+          } else if (pestDetails is List) {
+            details = pestDetails;
           }
+
+          final names = details
+              .map((detail) => detail['pest_name_id']?.toString() ?? '')
+              .where((name) => name.isNotEmpty && name.toLowerCase() != 'unknown')
+              .toSet()
+              .toList();
+          
+          if (names.isNotEmpty) return names;
+        } catch (e) {
+          debugPrint('⚠️ Error parsing pest_details: $e');
         }
       }
 
-      debugPrint('⚠️ No valid pest name found, using default');
-      return 'Unknown Pest';
+      return ['Unknown Pest'];
     }
+
+    final pestNames = parsePestNames();
+    final pestName = pestNames.isNotEmpty ? pestNames.join(', ') : 'Unknown Pest';
 
     return PestDetection(
       id: json['id'] ?? 0,
-      timestamp: json['timestamp']?.toString() ?? DateTime.now().toString(),
-      imageBase64: json['image']?.toString() ?? json['imageBase64']?.toString() ?? '',
-      motionDetected: json['motion_detected'] ?? json['motionDetected'] ?? false,
-      confidence: _parseConfidence(json['confidence']),
-      pestName: getPestName(),
+      timestamp: json['timestamp']?.toString() ?? 
+                 json['detection_time']?.toString() ?? 
+                 DateTime.now().toString(),
+      imageBase64: json['image']?.toString() ?? 
+                   json['imageBase64']?.toString() ?? 
+                   json['image_base64']?.toString() ?? '',
+      motionDetected: json['motion_detected'] ?? 
+                      json['motionDetected'] ?? 
+                      json['motion'] ?? 
+                      false,
+      confidence: _parseConfidence(json['confidence'] ?? json['max_confidence']),
+      pestName: pestName,
+      pestNames: pestNames,
     );
   }
 
-  // Helper untuk parse confidence dengan lebih robust
   static int _parseConfidence(dynamic confidence) {
     if (confidence == null) return 0;
     
     if (confidence is int) return confidence;
     
-    if (confidence is double) return confidence.round();
+    if (confidence is double) {
+      if (confidence <= 1.0) {
+        return (confidence * 100).round();
+      }
+      return confidence.round();
+    }
     
     if (confidence is String) {
-      // Remove % if exists
       final cleanStr = confidence.replaceAll('%', '').trim();
-      return int.tryParse(cleanStr) ?? 0;
+      final parsed = double.tryParse(cleanStr) ?? 0;
+      if (parsed <= 1.0) {
+        return (parsed * 100).round();
+      }
+      return parsed.round();
     }
     
     return 0;
-  }
-
-  // Helper untuk mendapatkan pest name dari nested map
-  static String getPestNameFromMap(Map<String, dynamic> map) {
-    final keys = [
-      'pestName', 'pest_name', 'name', 'pest', 'class', 
-      'class_name', 'className', 'label', 'prediction'
-    ];
-
-    for (final key in keys) {
-      if (map.containsKey(key)) {
-        final value = map[key];
-        if (value != null && value.toString().trim().isNotEmpty) {
-          final name = value.toString().trim();
-          if (name.toLowerCase() != 'unknown' && 
-              name.toLowerCase() != 'null' &&
-              name != '0') {
-            return name;
-          }
-        }
-      }
-    }
-
-    return 'Unknown Pest';
   }
 
   Map<String, dynamic> toJson() {
@@ -142,18 +139,17 @@ class PestDetection {
       'motion_detected': motionDetected,
       'confidence': confidence,
       'pest_name': pestName,
-      'pestName': pestName, // Tambahkan camelCase version
+      'pestName': pestName,
+      'pestNames': pestNames,
     };
   }
 
-  // Helper untuk mendapatkan severity
   String getSeverityLabel() {
     if (confidence >= 90) return 'Tinggi';
     if (confidence >= 70) return 'Sedang';
     return 'Rendah';
   }
 
-  // Helper untuk mendapatkan time ago
   String getTimeAgo() {
     try {
       final dt = DateTime.parse(timestamp);
@@ -174,32 +170,44 @@ class PestApiService {
   String _apiUrl;
   
   PestApiService({String? apiUrl}) 
-      : _apiUrl = apiUrl ?? 'https://web-production-849bb.up.railway.app/';
+      : _apiUrl = apiUrl ?? 'https://pestdetectionapi-production.up.railway.app';
 
   String get apiUrl => _apiUrl;
 
   void updateApiUrl(String newUrl) {
-    _apiUrl = newUrl;
+    _apiUrl = newUrl.endsWith('/') ? newUrl.substring(0, newUrl.length - 1) : newUrl;
+    debugPrint('✅ API URL updated: $_apiUrl');
   }
 
   // =========================================================================
-  // API METHODS
+  // API METHODS - ✅ FIXED TIMEOUTS
   // =========================================================================
 
   /// Fetch history of pest detections
   Future<List<PestDetection>> fetchHistory({int limit = 50}) async {
     try {
+      final url = '$_apiUrl/api/history?limit=$limit';
+      debugPrint('📡 Fetching history from: $url');
+      
       final response = await http.get(
-        Uri.parse('$_apiUrl/api/history?limit=$limit'),
-      ).timeout(const Duration(seconds: 10));
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ).timeout(
+        const Duration(seconds: 30), // ✅ Increased timeout
+        onTimeout: () {
+          throw TimeoutException('Request timeout - API might be processing detection');
+        },
+      );
 
       debugPrint('📥 History Response Status: ${response.statusCode}');
-      debugPrint('📥 History Response Body: ${response.body}');
-
+      
       if (response.statusCode == 200) {
         final dynamic decodedData = json.decode(response.body);
+        debugPrint('📥 History Response Type: ${decodedData.runtimeType}');
         
-        // Handle both array and object with array inside
         List<dynamic> data;
         if (decodedData is List) {
           data = decodedData;
@@ -218,75 +226,267 @@ class PestApiService {
             return PestDetection.fromJson(item as Map<String, dynamic>);
           } catch (e) {
             debugPrint('❌ Error parsing detection: $e');
-            debugPrint('❌ Item data: $item');
             return null;
           }
         }).whereType<PestDetection>().toList();
 
         debugPrint('✅ Parsed ${detections.length} detections');
         return detections;
+      } else if (response.statusCode == 503) {
+        throw Exception('API is busy processing - please wait');
       } else {
         throw Exception('Failed to load history: ${response.statusCode}');
       }
     } on TimeoutException {
-      throw Exception('Connection timeout');
+      throw Exception('Connection timeout - API might be busy with detection');
+    } on http.ClientException catch (e) {
+      throw Exception('Network error: $e');
     } catch (e) {
       debugPrint('❌ fetchHistory error: $e');
       throw Exception('Failed to load history: $e');
     }
   }
 
-  /// Check for new detection
-  Future<Map<String, dynamic>> checkNewDetection() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$_apiUrl/data'),
-      ).timeout(const Duration(seconds: 5));
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body) as Map<String, dynamic>;
-        debugPrint('🔄 Check Detection Response: ${data.toString()}');
+  /// Check for new detection - ✅ WITH RETRY LOGIC
+  Future<Map<String, dynamic>> checkNewDetection({
+    int maxRetries = 2,
+    Duration timeout = const Duration(seconds: 20), // ✅ Increased
+  }) async {
+    int retryCount = 0;
+    
+    while (retryCount <= maxRetries) {
+      try {
+        final url = '$_apiUrl/data';
+        debugPrint('📡 Checking detection (attempt ${retryCount + 1}/$maxRetries)');
         
-        return {
-          'success': true,
-          'data': data,
-        };
-      } else {
-        throw Exception('Failed to check detection: ${response.statusCode}');
+        final response = await http.get(
+          Uri.parse(url),
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+        ).timeout(
+          timeout,
+          onTimeout: () {
+            if (retryCount < maxRetries) {
+              debugPrint('⏰ Timeout - will retry...');
+            }
+            throw TimeoutException('Request timeout');
+          },
+        );
+
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body) as Map<String, dynamic>;
+          
+          return {
+            'success': true,
+            'data': data,
+          };
+        } else if (response.statusCode == 503) {
+          // API busy - wait longer and retry
+          if (retryCount < maxRetries) {
+            debugPrint('⚠️ API busy (503) - retrying in 3s...');
+            await Future.delayed(const Duration(seconds: 3));
+            retryCount++;
+            continue;
+          }
+          throw Exception('API is busy processing detection');
+        } else {
+          throw Exception('HTTP ${response.statusCode}');
+        }
+      } on TimeoutException {
+        if (retryCount < maxRetries) {
+          retryCount++;
+          await Future.delayed(const Duration(seconds: 2));
+          continue;
+        }
+        throw Exception('Connection timeout after $maxRetries retries');
+      } catch (e) {
+        if (retryCount < maxRetries) {
+          retryCount++;
+          await Future.delayed(const Duration(seconds: 2));
+          continue;
+        }
+        throw Exception('Failed to check detection: $e');
       }
-    } on TimeoutException {
-      throw Exception('Connection timeout');
-    } catch (e) {
-      throw Exception('Failed to check detection: $e');
     }
+    
+    throw Exception('Max retries exceeded');
   }
 
   /// Delete a detection by ID
   Future<bool> deleteDetection(int id) async {
     try {
+      final url = '$_apiUrl/api/delete/$id';
+      debugPrint('🗑️ Deleting from: $url');
+      
       final response = await http.delete(
-        Uri.parse('$_apiUrl/api/delete/$id'),
-        headers: {'Content-Type': 'application/json'},
-      ).timeout(const Duration(seconds: 10));
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 15)); // ✅ Increased
 
       debugPrint('🗑️ Delete Response Status: ${response.statusCode}');
-      return response.statusCode == 200;
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['success'] == true;
+      }
+      
+      return false;
     } catch (e) {
       debugPrint('❌ Delete detection error: $e');
       return false;
     }
   }
 
-  /// Test connection to API
-  Future<bool> testConnection() async {
+  /// Test connection to API - ✅ WITH BETTER ERROR HANDLING
+  Future<Map<String, dynamic>> testConnection() async {
     try {
+      final url = '$_apiUrl/ping';
+      debugPrint('🔍 Testing connection to: $url');
+      
+      final stopwatch = Stopwatch()..start();
+      
       final response = await http.get(
-        Uri.parse('$_apiUrl/data'),
-      ).timeout(const Duration(seconds: 5));
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          throw TimeoutException('Connection timeout after 15 seconds');
+        },
+      );
 
-      return response.statusCode == 200;
+      stopwatch.stop();
+      final responseTime = stopwatch.elapsedMilliseconds;
+      
+      debugPrint('📡 Ping Response Status: ${response.statusCode} (${responseTime}ms)');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        debugPrint('✅ Connection successful: $data');
+        
+        return {
+          'success': true,
+          'message': 'Connected successfully (${responseTime}ms)',
+          'responseTime': responseTime,
+          'data': data,
+        };
+      } else if (response.statusCode == 503) {
+        return {
+          'success': false,
+          'message': 'API is busy (initializing or processing)',
+          'responseTime': responseTime,
+        };
+      } else {
+        return {
+          'success': false,
+          'message': 'HTTP ${response.statusCode}',
+          'responseTime': responseTime,
+        };
+      }
+    } on TimeoutException catch (e) {
+      return {
+        'success': false,
+        'message': 'Connection timeout - API might be starting up',
+        'error': e.toString(),
+      };
+    } on http.ClientException catch (e) {
+      return {
+        'success': false,
+        'message': 'Network error: ${e.message}',
+        'error': e.toString(),
+      };
     } catch (e) {
       debugPrint('❌ Test connection error: $e');
+      return {
+        'success': false,
+        'message': 'Connection failed',
+        'error': e.toString(),
+      };
+    }
+  }
+
+  /// Get API statistics
+  Future<Map<String, dynamic>?> getStats() async {
+    try {
+      final url = '$_apiUrl/api/stats';
+      
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        return json.decode(response.body) as Map<String, dynamic>;
+      }
+      
+      return null;
+    } catch (e) {
+      debugPrint('❌ Get stats error: $e');
+      return null;
+    }
+  }
+
+  /// Trigger manual capture (if ESP32 is connected)
+  Future<bool> triggerCapture() async {
+    try {
+      final url = '$_apiUrl/api/trigger-capture';
+      debugPrint('📸 Triggering capture: $url');
+      
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      debugPrint('📸 Trigger Response Status: ${response.statusCode}');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['success'] == true;
+      }
+      
+      return false;
+    } catch (e) {
+      debugPrint('❌ Trigger capture error: $e');
+      return false;
+    }
+  }
+
+  // =========================================================================
+  // ✅ NEW: CHECK API HEALTH
+  // =========================================================================
+
+  /// Check if API is ready (Roboflow loaded, MQTT connected)
+  Future<bool> isApiReady() async {
+    try {
+      final result = await testConnection();
+      
+      if (!result['success']) return false;
+      
+      final data = result['data'] as Map<String, dynamic>?;
+      if (data == null) return false;
+      
+      // Check if Roboflow and MQTT are ready
+      final roboflowReady = data['roboflow_ready'] == true;
+      final mqttConnected = data['mqtt_connected'] == true;
+      
+      debugPrint('🔍 API Status: Roboflow=$roboflowReady, MQTT=$mqttConnected');
+      
+      return roboflowReady && mqttConnected;
+    } catch (e) {
       return false;
     }
   }
@@ -295,16 +495,16 @@ class PestApiService {
   // HELPER METHODS
   // =========================================================================
 
-  /// Decode base64 image safely
   Uint8List? decodeImage(String base64String) {
     if (base64String.isEmpty) return null;
     
     try {
-      // Remove data:image prefix if exists
       String cleanBase64 = base64String;
       if (base64String.contains(',')) {
         cleanBase64 = base64String.split(',').last;
       }
+      
+      cleanBase64 = cleanBase64.replaceAll(RegExp(r'\s+'), '');
       
       return base64Decode(cleanBase64);
     } catch (e) {
@@ -313,10 +513,8 @@ class PestApiService {
     }
   }
 
-  /// Parse detection from raw JSON (for real-time updates)
   PestDetection? parseDetection(Map<String, dynamic> data) {
     try {
-      debugPrint('🔄 Parsing detection: ${data.toString()}');
       return PestDetection.fromJson(data);
     } catch (e) {
       debugPrint('❌ Parse detection error: $e');
@@ -324,5 +522,3 @@ class PestApiService {
     }
   }
 }
-
-// don services
