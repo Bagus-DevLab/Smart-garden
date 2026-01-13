@@ -14,7 +14,6 @@ class AppColors {
   static const Color primaryDark = teal;                // Hover, pressed states
   static const Color secondary = mint;                  // Secondary actions
   static const Color accent = deepTeal;                 // Highlights, selected items
-
   static const Color background = cream;                // Screen background
   static const Color surface = lightMint;               // Cards, elevated components
   static const Color surfaceVariant = Color(0xFFFFFFFF); // White surface when needed
