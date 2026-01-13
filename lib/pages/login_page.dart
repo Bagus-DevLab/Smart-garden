@@ -5,6 +5,7 @@ import 'package:smart_farming/theme/app_colors.dart';
 import 'package:smart_farming/cubit/auth/auth_cubit.dart';
 import 'package:smart_farming/pages/register_page.dart';
 import 'package:smart_farming/pages/forget_password_page.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // Tambahkan ini
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -45,17 +46,42 @@ class _LoginPageState extends State<LoginPage> {
         child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24.0),
-            child: BlocConsumer<AuthCubit, AuthState>(
-              listener: (context, state) {
-                if (state is AuthError) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(state.message),
-                      backgroundColor: AppColors.error,
-                    ),
-                  );
-                }
-              },
+              child: BlocConsumer<AuthCubit, AuthState>(
+                // 1. Tambahkan 'async' di sini agar bisa menunggu proses ambil token
+                  listener: (context, state) async {
+
+                    // 2. Handle jika Login Berhasil
+                    // Cek file auth_state.dart kamu, pastikan nama statenya benar (misal: AuthSuccess atau AuthAuthenticated)
+                    if (state is AuthAuthenticated) {
+
+                      // --- AMBIL TOKEN UNTUK TEST BRUNO ---
+                      User? user = FirebaseAuth.instance.currentUser;
+                      if (user != null) {
+                        String? token = await user.getIdToken();
+                        print("\n\n============================================");
+                        print(">>> COPY TOKEN DI BAWAH INI KE BRUNO <<<");
+                        print(token);
+                        print("============================================\n\n");
+                      }
+
+                      // --- NAVIGASI KE HOME ---
+                      // Setelah dapat token/sukses, pindah ke halaman utama
+                      if (context.mounted) {
+                        // Ganti '/home' atau DashboardPage() sesuai routing aplikasi kamu
+                        Navigator.pushReplacementNamed(context, '/home');
+                      }
+                    }
+
+                    // 3. Handle jika Login Gagal (Kode lama kamu)
+                    if (state is AuthError) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(state.message),
+                          backgroundColor: AppColors.error,
+                        ),
+                      );
+                    }
+                  },
               builder: (context, state) {
                 final isLoading = state is AuthLoading;
 
