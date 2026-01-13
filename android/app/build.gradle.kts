@@ -12,12 +12,15 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+        // BEDA DISINI: Pakai "is" di depan dan pakai "="
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
+        // BEDA DISINI: Pakai kutip dua "1.8"
+        jvmTarget = "1.8"
     }
 
     defaultConfig {
@@ -41,5 +44,9 @@ flutter {
 }
 
 dependencies {
+    // Gunakan kurung () untuk semua implementation
     implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
+
+
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

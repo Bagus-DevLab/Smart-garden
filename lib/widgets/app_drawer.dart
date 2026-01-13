@@ -1,6 +1,7 @@
 // lib/widgets/app_drawer.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:smart_farming/pages/notification_drawer.dart';
 import 'package:smart_farming/pages/pembajakan_page.dart';
 import 'package:smart_farming/pages/weather_page.dart';
 import 'package:smart_farming/theme/app_colors.dart';
@@ -151,8 +152,13 @@ class AppDrawer extends StatelessWidget {
                       icon: Icons.history,
                       title: "Riwayat Data",
                       onTap: () {
-                        // TODO: Navigate to history
                         Navigator.pop(context);
+                        Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) => const NotificationDrawer(),
+                            ),
+                            );
                       },
                     ),
                     _DrawerItem(
