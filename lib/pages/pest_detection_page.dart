@@ -6,7 +6,6 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/pest_api_service.dart';
 import 'pest_gallery_page.dart';
-import 'package:intl/intl.dart';
 
 class PestDetectionPage extends StatefulWidget {
   const PestDetectionPage({super.key});
@@ -28,12 +27,11 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
   bool isSystemEnabled = true;
   bool _isCapturing = false;
   bool _isInitialized = false;
+  bool _isTogglingSystem = false;
   
-  // ✅ ESP32 Status
+  // ESP32 Status
   bool _esp32Online = false;
-  String? _esp32LastSeen;
-  // ignore: unused_field
-  int? _esp32LastSeenSeconds;
+  bool _esp32CameraSleepMode = false;
 
   String _connectionStatus = 'Connecting';
   String overallStatus = 'Aman';
@@ -63,6 +61,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
       await prefs.setInt('total_detections', totalDetections);
       await prefs.setString('overall_status', overallStatus);
       await prefs.setString('last_detection_time', _lastDetectionTime);
+      await prefs.setBool('system_enabled', isSystemEnabled);
     } catch (e) {
       debugPrint('❌ Save cache error: $e');
     }
@@ -81,6 +80,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
           totalDetections = prefs.getInt('total_detections') ?? 0;
           overallStatus = prefs.getString('overall_status') ?? 'Aman';
           _lastDetectionTime = prefs.getString('last_detection_time') ?? '-';
+          isSystemEnabled = prefs.getBool('system_enabled') ?? true;
           _updateStatusColor();
         });
         _cacheImages();
@@ -114,7 +114,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     }
   }
 
-  // ✅ UPDATE: Test connection dengan ESP32 status
   Future<void> _testConnection() async {
     final result = await _apiService.testConnection();
     if (!mounted) return;
@@ -123,14 +122,13 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
       isSystemConnected = result['success'] == true;
       _connectionStatus = isSystemConnected ? 'Connected' : 'Error: ${result['message']}';
       
-      // ✅ Parse ESP32 status dari response
       if (result['success'] == true && result['data'] != null) {
         final data = result['data'] as Map<String, dynamic>;
         _esp32Online = data['esp32_online'] == true;
-        _esp32LastSeen = data['esp32_last_seen']?.toString();
-        _esp32LastSeenSeconds = data['esp32_last_seen_seconds_ago'] as int?;
+        _esp32CameraSleepMode = data['esp32_camera_sleep_mode'] ?? false;
         
         debugPrint('🔌 ESP32 Status: $_esp32Online');
+        debugPrint('📷 Camera Sleep: $_esp32CameraSleepMode');
       }
     });
   }
@@ -159,8 +157,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
 
       _cacheImages();
       await _saveCache();
-      
-      // ✅ Update ESP32 status after loading history
       await _updateEsp32Status();
     } catch (e) {
       if (mounted) {
@@ -172,7 +168,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     }
   }
 
-  // ✅ NEW: Update ESP32 status
   Future<void> _updateEsp32Status() async {
     try {
       final result = await _apiService.testConnection();
@@ -182,8 +177,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
         final data = result['data'] as Map<String, dynamic>;
         setState(() {
           _esp32Online = data['esp32_online'] == true;
-          _esp32LastSeen = data['esp32_last_seen']?.toString();
-          _esp32LastSeenSeconds = data['esp32_last_seen_seconds_ago'] as int?;
+          _esp32CameraSleepMode = data['esp32_camera_sleep_mode'] ?? false;
         });
       }
     } catch (e) {
@@ -204,7 +198,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       _checkNewDetection();
-      _updateEsp32Status(); // ✅ Update ESP32 status setiap polling
+      _updateEsp32Status();
     });
   }
 
@@ -227,12 +221,10 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
           _connectionStatus = 'Connected';
           isSystemConnected = true;
           
-          // ✅ Update ESP32 status from /data endpoint
           if (data['esp32Status'] != null) {
             final esp32Status = data['esp32Status'] as Map<String, dynamic>;
             _esp32Online = esp32Status['online'] == true;
-            _esp32LastSeen = esp32Status['lastSeen']?.toString();
-            _esp32LastSeenSeconds = esp32Status['lastSeenSecondsAgo'] as int?;
+            _esp32CameraSleepMode = esp32Status['cameraSleepMode'] ?? false;
           }
         });
 
@@ -308,23 +300,103 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                 : AppColors.success;
   }
 
-  void _enableSystem() {
+  Future<void> _enableSystem() async {
+    if (_isTogglingSystem) return;
+    
     setState(() {
-      isSystemEnabled = true;
-      _connectionStatus = 'Connecting';
+      _isTogglingSystem = true;
     });
-    _loadHistory().then((_) => _startPolling());
-    _showSnackBar('🟢 Sistem monitoring diaktifkan', isError: false);
+
+    try {
+      _showSnackBar('🔄 Mengaktifkan sistem...', isError: false);
+      
+      final result = await _apiService.setSystemActive(true);
+      
+      if (result['success'] == true) {
+        if (mounted) {
+          setState(() {
+            isSystemEnabled = true;
+            _connectionStatus = 'Connecting';
+            _esp32CameraSleepMode = false; // Camera akan wake up
+          });
+        }
+        
+        await _saveCache();
+        await _loadHistory();
+        _startPolling();
+        
+        if (mounted) {
+          _showSnackBar(
+            '🟢 Sistem aktif! Kamera diaktifkan', 
+            isError: false
+          );
+        }
+      } else {
+        _showSnackBar(
+          '❌ ${result['message'] ?? 'Gagal mengaktifkan sistem'}', 
+          isError: true
+        );
+      }
+    } catch (e) {
+      _showSnackBar('❌ Error: ${e.toString()}', isError: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isTogglingSystem = false;
+        });
+      }
+    }
   }
 
-  void _disableSystem() {
-    _stopPolling();
+  Future<void> _disableSystem() async {
+    if (_isTogglingSystem) return;
+    
     setState(() {
-      isSystemEnabled = false;
-      isSystemConnected = false;
-      _connectionStatus = 'Sistem Nonaktif';
+      _isTogglingSystem = true;
     });
-    _showSnackBar('🔴 Sistem monitoring dinonaktifkan', isError: false);
+
+    try {
+      _showSnackBar('🔄 Menonaktifkan sistem...', isError: false);
+      
+      final result = await _apiService.setSystemActive(false);
+      
+      _stopPolling();
+      
+      if (mounted) {
+        setState(() {
+          isSystemEnabled = false;
+          isSystemConnected = false;
+          _connectionStatus = 'Sistem Nonaktif';
+          _esp32CameraSleepMode = true; // Camera sleep
+        });
+      }
+      
+      await _saveCache();
+      
+      if (result['success'] == true) {
+        if (mounted) {
+          _showSnackBar(
+            '🔴 Sistem nonaktif! Kamera dimatikan', 
+            isError: false
+          );
+        }
+      } else {
+        if (mounted) {
+          _showSnackBar(
+            '⚠️ Sistem dinonaktifkan (warning: ${result['message']})', 
+            isError: false
+          );
+        }
+      }
+    } catch (e) {
+      _showSnackBar('⚠️ Sistem dinonaktifkan (error: ${e.toString()})', isError: false);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isTogglingSystem = false;
+        });
+      }
+    }
   }
 
   Future<void> _triggerManualCapture() async {
@@ -340,11 +412,11 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
       final success = await _apiService.triggerCapture();
 
       if (success) {
-        _showSnackBar('✅ Capture berhasil! Menunggu hasil deteksi...', isError: false);
-        await Future.delayed(const Duration(seconds: 2));
+        _showSnackBar('✅ Gambar sedang diproses...', isError: false);
+        await Future.delayed(const Duration(milliseconds: 1500));
         
-        for (int i = 0; i < 5; i++) {
-          await Future.delayed(const Duration(seconds: 2));
+        for (int i = 0; i < 3; i++) {
+          await Future.delayed(const Duration(milliseconds: 800));
           await _checkNewDetection();
         }
         
@@ -411,8 +483,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                     ),
                     const SizedBox(height: 16),
                     _buildDetailRow(Icons.access_time, 'Waktu', detection.getTimeAgo()),
-                    const SizedBox(height: 8),
-                    _buildDetailRow(Icons.fingerprint, 'ID', '#${detection.id}'),
                     const SizedBox(height: 20),
                     Row(
                       children: [
@@ -507,19 +577,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     return AppColors.info;
   }
 
-  // ✅ Format datetime untuk tampilan user-friendly
-  String _formatDateTime(String? datetime) {
-    if (datetime == null || datetime.isEmpty) return '-';
-    
-    try {
-      final dt = DateTime.parse(datetime);
-      // Format: 09 Jan 2026, 14:30
-      return DateFormat('dd MMM yyyy, HH:mm').format(dt);
-    } catch (e) {
-      return datetime;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -536,8 +593,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
             children: [
               _buildHeader(),
               const SizedBox(height: 16),
-              // ✅ NEW: ESP32 Status Card (Fixed)
-              _buildEsp32StatusCard(),
+              _buildCameraStatusCard(),
               const SizedBox(height: 20),
               _buildOverallStatusCard(),
               const SizedBox(height: 20),
@@ -600,61 +656,81 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     );
   }
 
-  // ✅ FIXED: ESP32 Status Card - Tidak bergerak saat update & format datetime lebih mudah dibaca
-  Widget _buildEsp32StatusCard() {
-    final statusColor = _esp32Online ? AppColors.success : AppColors.error;
-    final statusText = _esp32Online ? 'ESP32 Online' : 'ESP32 Offline';
+  Widget _buildCameraStatusCard() {
+    // Determine camera status based on system state
+    final bool cameraActive = isSystemEnabled && _esp32Online && !_esp32CameraSleepMode;
+    final Color cameraColor = cameraActive ? AppColors.success : AppColors.error;
+    final String cameraStatusText = !isSystemEnabled 
+        ? 'Kamera Nonaktif' 
+        : _esp32CameraSleepMode 
+            ? 'Kamera Sleep' 
+            : _esp32Online 
+                ? 'Kamera Aktif' 
+                : 'Kamera Offline';
     
-    // ✅ Format datetime yang lebih user-friendly
-    String lastSeenText = '-';
-    if (_esp32Online) {
-      lastSeenText = 'Aktif sekarang';
-    } else if (_esp32LastSeen != null && _esp32LastSeen!.isNotEmpty) {
-      lastSeenText = _formatDateTime(_esp32LastSeen);
+    final IconData cameraIcon = !isSystemEnabled || _esp32CameraSleepMode
+        ? Icons.camera_alt_outlined
+        : Icons.camera_alt;
+
+    String statusMessage = '';
+    if (!isSystemEnabled) {
+      statusMessage = 'Sistem monitoring dinonaktifkan';
+    } else if (_esp32CameraSleepMode) {
+      statusMessage = 'Kamera dalam mode hemat energi';
+    } else if (_esp32Online) {
+      statusMessage = 'Monitoring area secara realtime';
     } else {
-      lastSeenText = 'Belum pernah terhubung';
+      statusMessage = 'Menunggu koneksi ESP32...';
     }
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.surfaceVariant,
+        gradient: LinearGradient(
+          colors: cameraActive 
+              ? [AppColors.success.withValues(alpha: 0.1), AppColors.success.withValues(alpha: 0.05)]
+              : [AppColors.error.withValues(alpha: 0.1), AppColors.error.withValues(alpha: 0.05)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: statusColor.withValues(alpha: 0.3),
-          width: 1.5,
+          color: cameraColor.withValues(alpha: 0.3),
+          width: 2,
         ),
         boxShadow: [
           BoxShadow(
-            color: AppColors.shadow,
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+            color: cameraColor.withValues(alpha: 0.1),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Row(
         children: [
-          // Status Indicator
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.1),
+              color: cameraColor.withValues(alpha: 0.15),
               shape: BoxShape.circle,
-              border: Border.all(
-                color: statusColor.withValues(alpha: 0.3),
-                width: 2,
-              ),
+              boxShadow: cameraActive ? [
+                BoxShadow(
+                  color: cameraColor.withValues(alpha: 0.3),
+                  blurRadius: 12,
+                  spreadRadius: 2,
+                ),
+              ] : [],
             ),
             child: Stack(
               alignment: Alignment.center,
               children: [
                 Icon(
-                  Icons.developer_board,
-                  color: statusColor,
-                  size: 28,
+                  cameraIcon,
+                  color: cameraColor,
+                  size: 32,
                 ),
-                if (_esp32Online)
+                if (cameraActive)
                   Positioned(
                     right: 0,
                     top: 0,
@@ -665,9 +741,16 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                         color: AppColors.success,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: AppColors.surfaceVariant,
+                          color: Colors.white,
                           width: 2,
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.success.withValues(alpha: 0.5),
+                            blurRadius: 4,
+                            spreadRadius: 1,
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -675,12 +758,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
             ),
           ),
           const SizedBox(width: 16),
-          
-          // Status Info
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
                   children: [
@@ -688,31 +768,24 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                       width: 8,
                       height: 8,
                       decoration: BoxDecoration(
-                        color: statusColor,
+                        color: cameraColor,
                         shape: BoxShape.circle,
-                        boxShadow: _esp32Online ? [
-                          BoxShadow(
-                            color: statusColor.withValues(alpha: 0.5),
-                            blurRadius: 8,
-                            spreadRadius: 2,
-                          ),
-                        ] : [],
                       ),
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      statusText,
+                      cameraStatusText,
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: statusColor,
+                        color: cameraColor,
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  lastSeenText,
+                  statusMessage,
                   style: TextStyle(
                     fontSize: 12,
                     color: AppColors.textSecondary,
@@ -720,26 +793,13 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
-                if (!_esp32Online) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    'Perangkat tidak terhubung',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: AppColors.textTertiary,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ],
               ],
             ),
           ),
-          
-          // Status Icon
           Icon(
-            _esp32Online ? Icons.check_circle : Icons.cancel,
-            color: statusColor,
-            size: 24,
+            cameraActive ? Icons.videocam : Icons.videocam_off,
+            color: cameraColor,
+            size: 28,
           ),
         ],
       ),
@@ -995,15 +1055,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Icon(Icons.fingerprint, size: 12, color: AppColors.textSecondary),
-                      const SizedBox(width: 4),
-                      Expanded(child: Text('ID: ${detection.id}', style: TextStyle(fontSize: 11, color: AppColors.textSecondary), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
                       Icon(Icons.access_time, size: 12, color: AppColors.textSecondary),
@@ -1034,7 +1086,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
   }
 
   Widget _buildFeaturedCaptureButton() {
-    // ✅ Button disabled if ESP32 is offline
     final canCapture = isSystemEnabled && isSystemConnected && !_isCapturing && _esp32Online;
     
     return InkWell(
@@ -1060,7 +1111,14 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), shape: BoxShape.circle),
               child: _isCapturing 
-                  ? const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3)) 
+                  ? const SizedBox(
+                      width: 28, 
+                      height: 28, 
+                      child: CircularProgressIndicator(
+                        color: Colors.white, 
+                        strokeWidth: 2.5,
+                      ),
+                    )
                   : Icon(
                       canCapture ? Icons.camera_alt : Icons.camera_alt_outlined,
                       color: Colors.white, 
@@ -1073,13 +1131,13 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _isCapturing ? 'Mengambil Gambar...' : 'Ambil Gambar Manual', 
+                    _isCapturing ? 'Memproses...' : 'Ambil Gambar Manual', 
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     _isCapturing 
-                        ? 'Mohon tunggu...' 
+                        ? 'Sedang mendeteksi hama...' 
                         : !isSystemEnabled 
                             ? 'Sistem harus diaktifkan'
                             : !isSystemConnected
@@ -1102,26 +1160,56 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
   Widget _buildSystemToggle() {
     return Container(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(color: AppColors.surfaceVariant, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: AppColors.shadow, blurRadius: 8, offset: const Offset(0, 2))]),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceVariant, 
+        borderRadius: BorderRadius.circular(16), 
+        boxShadow: [BoxShadow(color: AppColors.shadow, blurRadius: 8, offset: const Offset(0, 2))],
+      ),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: (isSystemEnabled ? AppColors.success : AppColors.textTertiary).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
-            child: Icon(Icons.power_settings_new, color: isSystemEnabled ? AppColors.success : AppColors.textTertiary, size: 28),
+            decoration: BoxDecoration(
+              color: (isSystemEnabled ? AppColors.success : AppColors.textTertiary).withValues(alpha: 0.1), 
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              Icons.power_settings_new, 
+              color: isSystemEnabled ? AppColors.success : AppColors.textTertiary, 
+              size: 28,
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Sistem Deteksi Hama', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                Text(
+                  'Sistem Deteksi Hama', 
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                ),
                 const SizedBox(height: 4),
-                Text(isSystemEnabled ? 'Sistem aktif dan memantau area' : 'Sistem dinonaktifkan', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                Text(
+                  isSystemEnabled 
+                      ? 'Kamera aktif & monitoring area' 
+                      : 'Kamera nonaktif & sistem off',
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
               ],
             ),
           ),
-          Switch(value: isSystemEnabled, onChanged: (value) => value ? _enableSystem() : _disableSystem(), activeColor: AppColors.success),
+          if (_isTogglingSystem)
+            const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            Switch(
+              value: isSystemEnabled, 
+              onChanged: (value) => value ? _enableSystem() : _disableSystem(), 
+              activeColor: AppColors.success,
+            ),
         ],
       ),
     );
