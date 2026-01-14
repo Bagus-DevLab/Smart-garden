@@ -1,12 +1,9 @@
 name: Release Flutter APK
 
-<<<<<<< HEAD
 permissions:
   contents: write
 
 
-=======
->>>>>>> chatbot
 on:
   push:
     tags:
