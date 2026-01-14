@@ -1,9 +1,12 @@
 name: Release Flutter APK
 
+<<<<<<< HEAD
 permissions:
   contents: write
 
 
+=======
+>>>>>>> chatbot
 on:
   push:
     tags:
@@ -26,7 +29,11 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+<<<<<<< HEAD
           flutter-version: "3.35.5"
+=======
+          flutter-version: "3.19.0"
+>>>>>>> chatbot
 
       - name: Install dependencies
         run: flutter pub get

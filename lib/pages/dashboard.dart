@@ -1,41 +1,79 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:smart_farming/theme/app_colors.dart';
+
+// --- IMPORT CHAT COMPONENTS ---
+import 'package:smart_farming/cubit/chat/chat_cubit.dart';
+import 'package:smart_farming/services/chat_service.dart';
+import 'package:smart_farming/widgets/chat_bottom_sheet.dart';
 
 class Dashboard extends StatelessWidget {
   const Dashboard({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: AppColors.background,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            _buildHeader(),
-            const SizedBox(height: 24),
+    // 1. Bungkus dengan BlocProvider agar ChatCubit tersedia di halaman ini
+    return BlocProvider(
+      create: (context) => ChatCubit(ChatService()),
 
-            // Weather Card
-            _buildWeatherCard(),
-            const SizedBox(height: 20),
+      // 2. Gunakan Builder agar kita bisa mengakses context milik Provider di atasnya
+      child: Builder(
+          builder: (context) {
+            // 3. Ubah Container root menjadi Scaffold agar bisa pakai floatingActionButton
+            return Scaffold(
+              backgroundColor: AppColors.background,
 
-            // Status Tanaman
-            _buildPlantStatusCard(),
-            const SizedBox(height: 20),
+              // Body berisi tampilan Dashboard lama kamu
+              body: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildHeader(),
+                    const SizedBox(height: 24),
+                    _buildWeatherCard(),
+                    const SizedBox(height: 20),
+                    _buildPlantStatusCard(),
+                    const SizedBox(height: 20),
+                    _buildSensorGrid(),
+                    const SizedBox(height: 20),
+                    _buildQuickActions(),
+                    // Tambahan space di bawah agar konten tidak tertutup tombol chat
+                    const SizedBox(height: 80),
+                  ],
+                ),
+              ),
 
-            // Sensor Grid
-            _buildSensorGrid(),
-            const SizedBox(height: 20),
-
-            // Quick Actions
-            _buildQuickActions(),
-          ],
-        ),
+              // 4. INI TOMBOL BUBBLE CHAT NYA
+              floatingActionButton: FloatingActionButton(
+                backgroundColor: AppColors.primary,
+                elevation: 4,
+                child: const Icon(Icons.chat_bubble, color: Colors.white),
+                onPressed: () => _showChatSheet(context),
+              ),
+            );
+          }
       ),
     );
   }
+
+  // --- FUNGSI MEMUNCULKAN CHAT ---
+  void _showChatSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        // Teruskan Cubit dari Dashboard ke dalam BottomSheet
+        return BlocProvider.value(
+          value: context.read<ChatCubit>(),
+          child: const ChatBottomSheet(),
+        );
+      },
+    );
+  }
+
+  // --- WIDGET DASHBOARD ASLI KAMU (TIDAK ADA YANG DIUBAH DI BAWAH INI) ---
 
   Widget _buildHeader() {
     return Column(
