@@ -340,6 +340,7 @@ lib/
 
 Project ini dikembangkan untuk **keperluan edukasi dan penelitian**.
 Silakan digunakan, dimodifikasi, dan dikembangkan lebih lanjut.
+![MIT License](license)
 
 ---
 
