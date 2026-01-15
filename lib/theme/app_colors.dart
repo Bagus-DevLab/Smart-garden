@@ -31,4 +31,6 @@ class AppColors {
   // UI Elements
   static const Color divider = Color(0xFFE0E0E0);       // Dividers, borders
   static const Color shadow = Color(0x1A000000);        // Box shadows
+  static const Color textMain = Color(0xFF0F172A);
+  static const Color textSub = Color(0xFF64748B);
 }
