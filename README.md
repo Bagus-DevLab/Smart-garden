@@ -246,11 +246,11 @@ Proyek ini dibuat untuk keperluan akademis. Silakan gunakan dan kembangkan sesua
 
 ## 📱 Preview Aplikasi
 
-> Tambahkan screenshot aplikasi di folder berikut:
+### 📊 Dashboard
+![Dashboard](assets/screenshoots/ss1.jpg)
 
-```
-/assets/screenshots/
-```
+### 🎛️ Pest Device
+![Pest](assets/screenshoots/ss2.jpg)
 
 ---
 
