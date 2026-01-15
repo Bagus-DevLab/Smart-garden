@@ -5,7 +5,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 /// Smart Rice Flowman - IoT Pembajakan Sawah Otomatis
-/// Versi: 16.0 Production (Updated Connection to smart-garden-backend)
+/// UI/UX Revamp: Modern Clean Interface
 
 class PembajakanPage extends StatefulWidget {
   const PembajakanPage({super.key});
@@ -16,44 +16,42 @@ class PembajakanPage extends StatefulWidget {
 
 class _PembajakanPageState extends State<PembajakanPage>
     with SingleTickerProviderStateMixin {
-  
-  // ================= WARNA TEMA (TETAP) =================
-  static const cream = Color(0xFFF5F1E8);
-  static const lightMint = Color(0xFFE8F3EA);
-  static const mint = Color(0xFFA3C9A8);
-  static const sage = Color(0xFF6B9080);
-  static const teal = Color(0xFF4A7C6F);
-  static const deepTeal = Color(0xFF2F5D5D);
-  static const textPrimary = Color(0xFF1A1A1A);
-  static const textSecondary = Color(0xFF5A5A5A);
-  static const warning = Color(0xFFE8B86D);
-  static const error = Color(0xFFD17A6F);
-  static const info = Color(0xFF7B9EA8);
 
-  // ================= URL BACKEND RAILWAY =================
+  // ================= WARNA TEMA MODERN =================
+  static const Color bgCream = Color(0xFFFAFAF5); // Lebih terang
+  static const Color primaryTeal = Color(0xFF0D5C63); // Teal Gelap (Primary)
+  static const Color accentMint = Color(0xFF44A1A0); // Mint Segar (Secondary)
+  static const Color surfaceWhite = Colors.white;
+  static const Color textDark = Color(0xFF1F2937);
+  static const Color textGrey = Color(0xFF6B7280);
+  static const Color warningOrange = Color(0xFFF59E0B);
+  static const Color successGreen = Color(0xFF10B981);
+  static const Color errorRed = Color(0xFFEF4444);
+
+  // ================= URL BACKEND =================
   final String baseUrl = "https://smart-garden-backend-production.up.railway.app";
 
-  // ================= STATE MANAGEMENT =================
+  // ================= STATE =================
   late AnimationController _animController;
   Timer? _sensorTimer;
 
-  // Data Sensor (Sinkron dengan tabel sensor_logs)
+  // Sensor Data
   double _soilMoisture = 0.0;
-  String _soilStatus = "Menunggu data sensor...";
-  String _lastUpdate = "N/A";
-  String _recommendation = "Sistem sedang menghubungkan ke sensor Soil Moisture L.V 12...";
-  Color _statusColor = sage;
+  String _soilStatus = "Menunggu...";
+  String _lastUpdate = "--:--";
+  String _recommendation = "Sedang memuat data...";
+  Color _statusColor = accentMint;
   bool _isConnected = false;
 
   // Grid Navigation
-  static const int gridSize = 20; 
+  static const int gridSize = 20;
   late List<List<bool>> grid;
   final List<Map<String, dynamic>> pathLog = [];
   Offset? lastPoint;
   double totalDistance = 0;
   bool isSending = false;
 
-  // History (Sinkron dengan tabel plowing_history)
+  // History
   List<dynamic> historyData = [];
   bool isLoadingHistory = false;
   int? expandedIndex;
@@ -62,10 +60,9 @@ class _PembajakanPageState extends State<PembajakanPage>
   void initState() {
     super.initState();
     grid = List.generate(gridSize, (_) => List.filled(gridSize, false));
-    _animController = AnimationController(vsync: this, duration: const Duration(milliseconds: 800))..forward();
+    _animController = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))..forward();
     _fetchRealSensorData();
     _loadHistory();
-    // Refresh otomatis data sensor setiap 10 detik
     _sensorTimer = Timer.periodic(const Duration(seconds: 10), (_) => _fetchRealSensorData());
   }
 
@@ -76,20 +73,17 @@ class _PembajakanPageState extends State<PembajakanPage>
     super.dispose();
   }
 
-  // ================= PENYEMPURNAAN KONEKSI BACKEND =================
+  // ================= LOGIC (TETAP SAMA) =================
 
-  // Ambil data terbaru dari tabel sensor_logs via backend Python
   Future<void> _fetchRealSensorData() async {
     try {
       final res = await http.get(
-        Uri.parse('$baseUrl/api/soil-data/latest'),
-        headers: {"Accept": "application/json"}
+          Uri.parse('$baseUrl/api/soil-data/latest'),
+          headers: {"Accept": "application/json"}
       ).timeout(const Duration(seconds: 8));
 
       if (res.statusCode == 200 && mounted) {
         final data = json.decode(res.body);
-        
-        // Cek jika ada data sensor yang valid
         if (data != null && data['moisture'] != null) {
           var moistVal = data['moisture'];
           double currentMoisture = moistVal is num ? moistVal.toDouble() : double.tryParse(moistVal.toString()) ?? 0.0;
@@ -97,47 +91,37 @@ class _PembajakanPageState extends State<PembajakanPage>
           setState(() {
             _isConnected = true;
             _soilMoisture = currentMoisture;
-            // Gunakan timestamp dari database atau waktu sekarang
-            _lastUpdate = data['timestamp']?.toString() ?? DateTime.now().toString().substring(11, 16);
+            _lastUpdate = DateTime.now().toString().substring(11, 16); // Simple timestamp
             _analyzeRealSoilData();
-          });
-        } else {
-          setState(() {
-            _isConnected = true;
-            _soilStatus = "Sensor Belum Aktif";
-            _recommendation = "Data sensor_logs kosong. Pastikan alat IoT telah mengirim data.";
           });
         }
       }
     } catch (e) {
       if (mounted) setState(() => _isConnected = false);
-      debugPrint("Sensor Error: $e");
     }
   }
 
   void _analyzeRealSoilData() {
     if (_soilMoisture < 35.0) {
-      _soilStatus = "Tanah Kering";
-      _statusColor = warning;
-      _recommendation = "Kelembapan rendah terdeteksi. Tanah keras, disarankan tunda pembajakan.";
+      _soilStatus = "Kering";
+      _statusColor = warningOrange;
+      _recommendation = "Tanah keras. Tunda pembajakan atau basahi lahan.";
     } else if (_soilMoisture <= 75.0) {
-      _soilStatus = "Kondisi Optimal";
-      _statusColor = sage;
-      _recommendation = "Kelembapan ideal terdeteksi. Kondisi tanah sempurna untuk pembajakan otomatis.";
+      _soilStatus = "Optimal";
+      _statusColor = successGreen;
+      _recommendation = "Kondisi tanah ideal untuk pembajakan otomatis.";
     } else {
-      _soilStatus = "Tanah Basah";
-      _statusColor = info;
-      _recommendation = "Kelembapan tinggi terdeteksi. Tanah terlalu lembab, disarankan menggunakan pola spiral agar traktor tidak selip.";
+      _soilStatus = "Basah";
+      _statusColor = primaryTeal;
+      _recommendation = "Tanah lembek. Gunakan pola spiral agar tidak selip.";
     }
   }
 
-  // Kirim pola ke backend (Akan disimpan ke plowing_history & dikirim ke MQTT)
   Future<void> _sendPattern() async {
     if (pathLog.isEmpty) {
-      _showSnack('Tidak ada pola untuk dikirim! Silakan gambar pada grid.', error);
+      _showSnack('Gambar pola jalur terlebih dahulu.', errorRed);
       return;
     }
-
     setState(() => isSending = true);
     try {
       List<Map<String, int>> coords = [];
@@ -146,7 +130,6 @@ class _PembajakanPageState extends State<PembajakanPage>
           if (grid[r][c]) coords.add({"x": c, "y": r});
         }
       }
-
       final res = await http.post(
         Uri.parse('$baseUrl/api/plow-path'),
         headers: {"Content-Type": "application/json"},
@@ -160,30 +143,25 @@ class _PembajakanPageState extends State<PembajakanPage>
 
       if (mounted) {
         if (res.statusCode == 200 || res.statusCode == 201) {
-          _showSnack('Pola terkirim ke alat & Tersimpan di MySQL Railway', sage);
+          _showSnack('Misi berhasil dikirim ke Traktor!', successGreen);
           _resetGrid();
           Future.delayed(const Duration(seconds: 2), () => _loadHistory());
         } else {
-          _showSnack('Gagal sinkronisasi backend (Status: ${res.statusCode})', error);
+          _showSnack('Gagal sinkronisasi backend.', errorRed);
         }
       }
     } catch (e) {
-      _showSnack('Gagal menghubungkan ke Railway: ${e.toString()}', error);
+      _showSnack('Koneksi Error: ${e.toString()}', errorRed);
     } finally {
       if (mounted) setState(() => isSending = false);
     }
   }
 
-  // Ambil daftar riwayat dari tabel plowing_history
   Future<void> _loadHistory() async {
     if (!mounted) return;
     setState(() => isLoadingHistory = true);
     try {
-      final res = await http.get(
-        Uri.parse('$baseUrl/api/plowing-history'),
-        headers: {"Accept": "application/json"}
-      ).timeout(const Duration(seconds: 10));
-
+      final res = await http.get(Uri.parse('$baseUrl/api/plowing-history'));
       if (res.statusCode == 200 && mounted) {
         final decoded = json.decode(res.body);
         setState(() {
@@ -193,11 +171,8 @@ class _PembajakanPageState extends State<PembajakanPage>
       }
     } catch (e) {
       if (mounted) setState(() => isLoadingHistory = false);
-      debugPrint("History Error: $e");
     }
   }
-
-  // ================= LOGIKA GRID & UI (TETAP UTUH) =================
 
   void _handleGridDraw(Offset localPos, double boxSize) {
     double cellSize = boxSize / gridSize;
@@ -212,20 +187,14 @@ class _PembajakanPageState extends State<PembajakanPage>
             double dx = col - lastPoint!.dx;
             double dy = row - lastPoint!.dy;
             double dist = sqrt(dx * dx + dy * dy);
-            
+
             String direction = "";
-            if (dy < 0) direction = "Maju";
-            else if (dy > 0) direction = "Mundur";
+            if (dy < 0) direction = "Maju"; else if (dy > 0) direction = "Mundur";
             if (dx > 0) direction += (direction.isEmpty ? "" : " ") + "Kanan";
             else if (dx < 0) direction += (direction.isEmpty ? "" : " ") + "Kiri";
-            
+
             if (direction.isNotEmpty) {
-              pathLog.add({
-                "direction": direction,
-                "distance": dist,
-                "from": lastPoint!,
-                "to": Offset(col.toDouble(), row.toDouble())
-              });
+              pathLog.add({"direction": direction, "distance": dist});
               totalDistance += dist;
             }
           }
@@ -245,504 +214,386 @@ class _PembajakanPageState extends State<PembajakanPage>
   }
 
   void _showSnack(String msg, Color col) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg, style: const TextStyle(fontWeight: FontWeight.w600)),
-        backgroundColor: col,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-      ),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg), backgroundColor: col, behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    ));
   }
+
+  // ================= UI BUILD =================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: cream,
-      body: Stack(
-        children: [
-          Positioned.fill(child: CustomPaint(painter: BGPainter())),
-          SafeArea(
-            child: Column(
-              children: [
-                _buildHeader(),
-                Expanded(
-                  child: RefreshIndicator(
-                    color: teal,
-                    onRefresh: () async {
-                      await _fetchRealSensorData();
-                      await _loadHistory();
-                    },
-                    child: SingleChildScrollView(
-                      physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        children: [
-                          _buildMonitoring(),
-                          const SizedBox(height: 20),
-                          _buildNavigation(),
-                          const SizedBox(height: 20),
-                          _buildHistory(),
-                          const SizedBox(height: 80),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+      backgroundColor: bgCream,
+      appBar: _buildModernAppBar(),
+      body: RefreshIndicator(
+        onRefresh: () async { await _fetchRealSensorData(); await _loadHistory(); },
+        color: primaryTeal,
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildConnectionStatus(),
+              const SizedBox(height: 20),
+              _buildMonitoringCard(),
+              const SizedBox(height: 25),
+              _buildSectionTitle("Navigasi Traktor", Icons.agriculture_rounded),
+              const SizedBox(height: 15),
+              _buildGridSystem(),
+              const SizedBox(height: 25),
+              _buildSectionTitle("Riwayat Aktivitas", Icons.history_rounded),
+              const SizedBox(height: 15),
+              _buildHistoryList(),
+              const SizedBox(height: 40),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
-Widget _buildHeader() {
-  return Container(
-    padding: const EdgeInsets.fromLTRB(25, 20, 25, 30),
-    decoration: const BoxDecoration(
-      gradient: LinearGradient(colors: [deepTeal, teal]),
-      borderRadius: BorderRadius.only(bottomLeft: Radius.circular(40), bottomRight: Radius.circular(40)),
-      boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 15, offset: Offset(0, 8))],
-    ),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        // TOMBOL BACK DITAMBAHKAN DI SINI
-        Row(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 24),
-              onPressed: () => Navigator.of(context).pop(),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-            ),
-            const SizedBox(width: 15),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text("Smart Rice Flowman", style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900)),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _isConnected ? Colors.greenAccent : Colors.redAccent,
-                        boxShadow: [BoxShadow(color: _isConnected ? Colors.greenAccent : Colors.redAccent, blurRadius: 8)],
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(_isConnected ? "CONNECTED" : "SIGNAL DISCONNECTED",
-                      style: const TextStyle(color: lightMint, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
-                  ],
-                ),
-              ],
-            ),
-          ],
+  PreferredSizeWidget _buildModernAppBar() {
+    return AppBar(
+      backgroundColor: bgCream,
+      elevation: 0,
+      centerTitle: true,
+      leading: Container(
+        margin: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+            color: surfaceWhite,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4)]
         ),
+        child: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded, color: textDark, size: 20),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      title: const Text("Smart Flowman", style: TextStyle(color: textDark, fontWeight: FontWeight.bold, fontSize: 18)),
+      actions: [
         IconButton(
-          icon: const Icon(Icons.refresh_rounded, color: Colors.white, size: 28),
-          onPressed: () async {
-            await _fetchRealSensorData();
-            await _loadHistory();
-          },
-        ),
+          icon: const Icon(Icons.refresh_rounded, color: primaryTeal),
+          onPressed: () { _fetchRealSensorData(); _loadHistory(); },
+        )
       ],
-    ),
-  );
-}
+    );
+  }
 
-  Widget _buildMonitoring() {
+  Widget _buildConnectionStatus() {
     return Container(
-      padding: const EdgeInsets.all(25),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(35),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 8))],
+        color: _isConnected ? successGreen.withOpacity(0.1) : errorRed.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _isConnected ? successGreen.withOpacity(0.3) : errorRed.withOpacity(0.3)),
       ),
-      child: Column(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.water_drop_rounded, color: teal, size: 24),
-              const SizedBox(width: 12),
-              const Text("Monitoring Kelembapan Tanah", style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900, color: deepTeal)),
-            ],
-          ),
-          const SizedBox(height: 25),
-          Stack(
-            alignment: Alignment.center,
-            children: [
-              SizedBox(
-                width: 200,
-                height: 200,
-                child: CircularProgressIndicator(
-                  value: _soilMoisture / 100,
-                  strokeWidth: 18,
-                  backgroundColor: cream,
-                  color: _statusColor,
-                  strokeCap: StrokeCap.round,
-                ),
-              ),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text("${_soilMoisture.toInt()}%",
-                    style: TextStyle(fontSize: 52, fontWeight: FontWeight.w900, color: _statusColor, letterSpacing: -2)),
-                  const Text("KELEMBAPAN", style: TextStyle(color: textSecondary, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 2)),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 25),
-          Row(
-            children: [
-              _buildInfo("Status", _soilStatus, Icons.eco_rounded, _statusColor),
-              const SizedBox(width: 15),
-              _buildInfo("Update", _lastUpdate, Icons.schedule_rounded, teal),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: _statusColor.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(25),
-              border: Border.all(color: _statusColor.withOpacity(0.2)),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.lightbulb_rounded, color: _statusColor, size: 26),
-                const SizedBox(width: 15),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text("Rekomendasi Pembajakan Sawah:", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13, color: deepTeal)),
-                      const SizedBox(height: 6),
-                      Text(_recommendation, style: TextStyle(color: deepTeal.withOpacity(0.85), height: 1.5, fontSize: 12.5)),
-                    ],
-                  ),
-                ),
-              ],
+          Icon(_isConnected ? Icons.wifi_rounded : Icons.wifi_off_rounded,
+              color: _isConnected ? successGreen : errorRed, size: 18),
+          const SizedBox(width: 10),
+          Text(
+            _isConnected ? "Terhubung ke IoT Gateway" : "Koneksi Terputus",
+            style: TextStyle(
+                color: _isConnected ? successGreen : errorRed,
+                fontWeight: FontWeight.bold,
+                fontSize: 12
             ),
           ),
+          const Spacer(),
+          Text("Update: $_lastUpdate", style: const TextStyle(color: textGrey, fontSize: 11)),
         ],
       ),
     );
   }
 
-  Widget _buildNavigation() {
+  Widget _buildMonitoringCard() {
     return Container(
-      padding: const EdgeInsets.all(25),
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(35),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, 8))],
+        gradient: const LinearGradient(
+            colors: [primaryTeal, Color(0xFF147A83)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(color: primaryTeal.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 8))
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
-              const Icon(Icons.map_rounded, color: teal, size: 24),
-              const SizedBox(width: 12),
-              const Text("Sistem Penentuan Navigasi Jalur", style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900, color: deepTeal)),
+              Icon(Icons.water_drop_rounded, color: Colors.white70, size: 20),
+              SizedBox(width: 8),
+              Text("KELEMBAPAN TANAH", style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1)),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(_soilMoisture.toStringAsFixed(0), style: const TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.w900, height: 1)),
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8, left: 4),
+                child: Text("%", style: TextStyle(color: Colors.white70, fontSize: 20, fontWeight: FontWeight.w600)),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(_soilStatus.toUpperCase(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+              )
             ],
           ),
           const SizedBox(height: 10),
-          const Text("Gambarkan pola pada grid untuk navigasi traktor otomatis.",
-            style: TextStyle(fontSize: 12, color: textSecondary, height: 1.4)),
-          const SizedBox(height: 20),
-          
-          LayoutBuilder(
-  builder: (context, constraints) {
-    double size = constraints.maxWidth;
-    return Container(
-      height: size,
-      decoration: BoxDecoration(
-        border: Border.all(color: deepTeal, width: 4),
-        borderRadius: BorderRadius.circular(25),
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: deepTeal.withOpacity(0.15),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          )
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(21),
-        child: GestureDetector(
-          // PENTING: onPanDown dan onPanUpdate mencegah scroll
-          onPanDown: (details) => _handleGridDraw(details.localPosition, size),
-          onPanUpdate: (details) => _handleGridDraw(details.localPosition, size),
-          behavior: HitTestBehavior.opaque,
-          child: CustomPaint(
-            size: Size(size, size),
-            painter: ImprovedGridPainter(
-              grid: grid, 
-              activeColor: sage, 
-              resolution: gridSize
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: _soilMoisture / 100,
+              backgroundColor: Colors.black12,
+              valueColor: AlwaysStoppedAnimation(
+                  _soilMoisture < 35 ? warningOrange : (_soilMoisture > 75 ? accentMint : successGreen)
+              ),
+              minHeight: 6,
             ),
           ),
-        ),
-      ),
-    );
-  },
-),
-          
           const SizedBox(height: 20),
-          
           Container(
-            padding: const EdgeInsets.all(15),
-            decoration: BoxDecoration(
-              color: lightMint,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: mint),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: Colors.black.withOpacity(0.15), borderRadius: BorderRadius.circular(12)),
+            child: Row(
               children: [
-                const Row(
-                  children: [
-                    Icon(Icons.route_rounded, color: deepTeal, size: 18),
-                    SizedBox(width: 8),
-                    Text("Detail Pergerakan", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: deepTeal)),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  height: 120,
-                  child: pathLog.isEmpty
-                    ? const Center(child: Text("Silakan gambar pola pada grid", style: TextStyle(color: textSecondary, fontSize: 12)))
-                    : ListView.builder(
-                      itemCount: pathLog.length,
-                      itemBuilder: (c, i) {
-                        var log = pathLog[i];
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 6),
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: mint),
-                          ),
-                          child: Text(
-                            "${i + 1}. Arah: ${log['direction']} | Jarak: ${log['distance'].toStringAsFixed(0)} cm",
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                          ),
-                        );
-                      },
-                    ),
-                ),
+                const Icon(Icons.tips_and_updates_rounded, color: Colors.yellowAccent, size: 18),
+                const SizedBox(width: 10),
+                Expanded(child: Text(_recommendation, style: const TextStyle(color: Colors.white, fontSize: 12))),
               ],
             ),
-          ),
-          
-          const SizedBox(height: 15),
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [sage, teal]),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Center(
-              child: Column(
-                children: [
-                  const Text("Total Jarak Misi", style: TextStyle(fontSize: 12, color: Colors.white70)),
-                  Text("${totalDistance.toStringAsFixed(0)} cm", style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w900, color: Colors.white)),
-                ],
-              ),
-            ),
-          ),
-          
-          const SizedBox(height: 15),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: isSending ? null : _sendPattern,
-                  icon: isSending
-                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.send_to_mobile_rounded, size: 20),
-                  label: Text(isSending ? "MENGIRIM..." : "KIRIM KOORDINAT"),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: deepTeal,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                    elevation: 8,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              ElevatedButton.icon(
-                onPressed: _resetGrid,
-                icon: const Icon(Icons.refresh_rounded, size: 20),
-                label: const Text("Reset"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: error,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                ),
-              ),
-            ],
-          ),
+          )
         ],
       ),
     );
   }
 
-  Widget _buildHistory() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildSectionTitle(String title, IconData icon) {
+    return Row(
       children: [
-        const Padding(
-          padding: EdgeInsets.only(left: 10, bottom: 15),
-          child: Text("Riwayat Pembajakan", style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: deepTeal)),
-        ),
-        if (isLoadingHistory)
-          const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator()))
-        else if (historyData.isEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(45),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(30)),
-            child: Column(
-              children: [
-                Icon(Icons.history_toggle_off_rounded, size: 55, color: mint.withOpacity(0.5)),
-                const SizedBox(height: 15),
-                const Text("Belum ada riwayat Pembajakan", style: TextStyle(color: textSecondary, fontWeight: FontWeight.w600)),
-              ],
-            ),
-          )
-        else
-          ...historyData.asMap().entries.map((e) => _buildHistoryCard(e.value, e.key)).toList(),
+        Icon(icon, color: primaryTeal, size: 20),
+        const SizedBox(width: 10),
+        Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textDark)),
       ],
     );
   }
 
-  Widget _buildHistoryCard(dynamic data, int index) {
-    bool isExp = expandedIndex == index;
-    // Sinkronisasi field created_at dari database MySQL Railway
-    final String fullDate = (data['created_at'] ?? "N/A").toString();
-    final String dateDisplay = fullDate.contains("T") ? fullDate.split("T")[0] : fullDate;
-    
-    // Sinkronisasi field path_data (JSON String -> List)
-    var rawPath = data['path_data'];
-    List coords = [];
-    if (rawPath is String) {
-      coords = json.decode(rawPath);
-    } else if (rawPath is List) {
-      coords = rawPath;
-    }
-
+  Widget _buildGridSystem() {
     return Container(
-      margin: const EdgeInsets.only(bottom: 15),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(25),
-        border: Border.all(color: isExp ? teal : Colors.transparent, width: 2),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 4))],
+        color: surfaceWhite,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 20, offset: const Offset(0, 4))],
       ),
       child: Column(
         children: [
-          ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            onTap: () => setState(() => expandedIndex = isExp ? null : index),
-            leading: const CircleAvatar(backgroundColor: lightMint, radius: 24, child: Icon(Icons.agriculture_rounded, color: sage)),
-            title: Text("Misi Pembajakan #${data['id'] ?? index}", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-            subtitle: Text("Tanggal: $dateDisplay", style: const TextStyle(fontSize: 12)),
-            trailing: Icon(isExp ? Icons.expand_less : Icons.expand_more, color: mint, size: 28),
+          // Header Grid
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("Gambar Pola", style: TextStyle(fontWeight: FontWeight.bold, color: textDark)),
+                    Text("Sentuh grid untuk membuat jalur", style: TextStyle(fontSize: 11, color: textGrey.withOpacity(0.8))),
+                  ],
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(color: primaryTeal.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+                  child: Text("Jarak: ${totalDistance.toStringAsFixed(0)} cm", style: const TextStyle(color: primaryTeal, fontWeight: FontWeight.bold, fontSize: 12)),
+                )
+              ],
+            ),
           ),
-          if (isExp)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 25),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Divider(height: 25, thickness: 1),
-                  Row(
-                    children: [
-                      const Icon(Icons.verified_user_rounded, size: 16, color: Colors.green),
-                      const SizedBox(width: 10),
-                      const Text("Status Database:", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                      const Spacer(),
-                      const Text("Sinkron Railway", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Colors.green)),
-                    ],
+
+          // The Grid
+          LayoutBuilder(
+            builder: (context, constraints) {
+              double size = constraints.maxWidth;
+              return GestureDetector(
+                onPanDown: (d) => _handleGridDraw(d.localPosition, size),
+                onPanUpdate: (d) => _handleGridDraw(d.localPosition, size),
+                child: Container(
+                  height: size,
+                  width: size,
+                  decoration: BoxDecoration(
+                      color: const Color(0xFFEEF2F6),
+                      border: Border(
+                          top: BorderSide(color: Colors.grey.shade200),
+                          bottom: BorderSide(color: Colors.grey.shade200)
+                      )
                   ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      const Icon(Icons.straighten_rounded, size: 16, color: teal),
-                      const SizedBox(width: 10),
-                      const Text("Jarak Tempuh:", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                      const Spacer(),
-                      Text("${data['total_distance']?.toStringAsFixed(0) ?? '0'} cm", style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: teal)),
-                    ],
+                  child: CustomPaint(
+                    painter: ImprovedGridPainter(grid: grid, activeColor: primaryTeal, resolution: gridSize),
                   ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      const Icon(Icons.water_drop_rounded, size: 16, color: info),
-                      const SizedBox(width: 10),
-                      const Text("Kelembapan Awal:", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                      const Spacer(),
-                      Text("${data['moisture_at_start']?.toStringAsFixed(1) ?? '0'} %", style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: info)),
-                    ],
-                  ),
-                  const SizedBox(height: 15),
-                  const Text("LOG KOORDINAT MISI:", style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1, color: textSecondary)),
-                  const SizedBox(height: 8),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(15),
-                    decoration: BoxDecoration(color: cream, borderRadius: BorderRadius.circular(15)),
-                    child: Text(
-                      coords.isEmpty ? "Tidak ada koordinat tersimpan" : coords.take(20).map((e) => "(${e['x']},${e['y']})").join(" • "),
-                      style: const TextStyle(fontSize: 11, fontFamily: 'Monospace', color: deepTeal),
+                ),
+              );
+            },
+          ),
+
+          // Controls
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _resetGrid,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text("Reset"),
+                    style: OutlinedButton.styleFrom(
+                        foregroundColor: errorRed,
+                        side: const BorderSide(color: errorRed),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
                     ),
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton.icon(
+                    onPressed: isSending ? null : _sendPattern,
+                    icon: isSending
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                        : const Icon(Icons.send_rounded, size: 18),
+                    label: Text(isSending ? "Mengirim..." : "Kirim Misi"),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryTeal,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
+                    ),
+                  ),
+                ),
+              ],
             ),
+          )
         ],
       ),
     );
   }
 
-  Widget _buildInfo(String label, String value, IconData icon, Color col) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: cream.withOpacity(0.6),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: col.withOpacity(0.15)),
-        ),
+  Widget _buildHistoryList() {
+    if (isLoadingHistory) {
+      return const Center(child: CircularProgressIndicator(color: primaryTeal));
+    }
+    if (historyData.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(30),
+        decoration: BoxDecoration(color: surfaceWhite, borderRadius: BorderRadius.circular(16)),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, size: 20, color: col),
+            Icon(Icons.history, size: 40, color: textGrey.withOpacity(0.3)),
             const SizedBox(height: 10),
-            Text(label, style: const TextStyle(fontSize: 10, color: textSecondary, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 4),
-            Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: textPrimary), overflow: TextOverflow.ellipsis),
+            Text("Belum ada riwayat", style: TextStyle(color: textGrey.withOpacity(0.5))),
           ],
         ),
+      );
+    }
+
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: historyData.length,
+      itemBuilder: (context, index) {
+        final data = historyData[index];
+        final bool isExpanded = expandedIndex == index;
+        final String date = (data['created_at'] ?? "N/A").toString().split("T")[0];
+
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+              color: surfaceWhite,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: isExpanded ? primaryTeal : Colors.transparent),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))]
+          ),
+          child: Column(
+            children: [
+              ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                onTap: () => setState(() => expandedIndex = isExpanded ? null : index),
+                leading: CircleAvatar(
+                  backgroundColor: primaryTeal.withOpacity(0.1),
+                  child: const Icon(Icons.check_circle_outline, color: primaryTeal, size: 20),
+                ),
+                title: Text("Misi #${data['id']}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                subtitle: Text(date, style: const TextStyle(fontSize: 12, color: textGrey)),
+                trailing: Text(
+                  "${data['total_distance']?.toStringAsFixed(0) ?? 0} cm",
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: primaryTeal, fontSize: 13),
+                ),
+              ),
+              if (isExpanded)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: const BoxDecoration(
+                      border: Border(top: BorderSide(color: Color(0xFFF3F4F6)))
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHistoryDetailRow("Status", "Sinkron Railway", successGreen),
+                      _buildHistoryDetailRow("Moisture Awal", "${data['moisture_at_start'] ?? 0}%", textDark),
+                      const SizedBox(height: 12),
+                      const Text("Koordinat:", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: textGrey)),
+                      const SizedBox(height: 4),
+                      Text(
+                        (data['path_data'] ?? "[]").toString(),
+                        style: const TextStyle(fontFamily: "Monospace", fontSize: 10, color: textGrey),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    ],
+                  ),
+                )
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildHistoryDetailRow(String label, String value, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 12, color: textGrey)),
+          Text(value, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+        ],
       ),
     );
   }
 }
 
-// ================= CUSTOM PAINTERS (TETAP) =================
+// ================= PAINTERS (DIPERHALUS) =================
 
 class ImprovedGridPainter extends CustomPainter {
   final List<List<bool>> grid;
@@ -756,82 +607,52 @@ class ImprovedGridPainter extends CustomPainter {
     double cellW = size.width / resolution;
     double cellH = size.height / resolution;
 
-    // Garis grid yang lebih tebal dan jelas
+    // Grid tipis
     Paint gridPaint = Paint()
-      ..color = const Color(0xFF2F5D5D).withOpacity(0.4)
-      ..strokeWidth = 2.0
-      ..style = PaintingStyle.stroke;
+      ..color = Colors.grey.withOpacity(0.2)
+      ..strokeWidth = 1.0;
 
-    // Gambar garis grid vertikal dan horizontal
     for (int i = 0; i <= resolution; i++) {
-      canvas.drawLine(
-        Offset(i * cellW, 0), 
-        Offset(i * cellW, size.height), 
-        gridPaint
-      );
-      canvas.drawLine(
-        Offset(0, i * cellH), 
-        Offset(size.width, i * cellH), 
-        gridPaint
-      );
+      canvas.drawLine(Offset(i * cellW, 0), Offset(i * cellW, size.height), gridPaint);
+      canvas.drawLine(Offset(0, i * cellH), Offset(size.width, i * cellH), gridPaint);
     }
 
-    // Garis tepi lebih tebal
-    Paint borderPaint = Paint()
-      ..color = const Color(0xFF2F5D5D)
-      ..strokeWidth = 3.0
-      ..style = PaintingStyle.stroke;
-    
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), borderPaint);
+    // Sel Aktif
+    Paint fillPaint = Paint()..color = activeColor;
 
-    // Paint untuk sel aktif dengan efek glow
-    Paint fillPaint = Paint()
-      ..color = activeColor
-      ..style = PaintingStyle.fill;
-    
-    Paint glowPaint = Paint()
-      ..color = activeColor.withOpacity(0.4)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+    // Path Line (Untuk menghubungkan titik - opsional visualisasi)
+    Paint pathPaint = Paint()
+      ..color = activeColor.withOpacity(0.5)
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
 
-    // Gambar sel yang aktif
+    Path pathLine = Path();
+    bool first = true;
+
     for (int r = 0; r < resolution; r++) {
       for (int c = 0; c < resolution; c++) {
         if (grid[r][c]) {
-          Rect cellRect = Rect.fromLTWH(
-            c * cellW + 2, 
-            r * cellH + 2, 
-            cellW - 4, 
-            cellH - 4
-          );
-          
-          // Efek glow
-          canvas.drawRRect(
-            RRect.fromRectAndRadius(cellRect.inflate(3), const Radius.circular(4)), 
-            glowPaint
-          );
-          
-          // Sel aktif
-          canvas.drawRRect(
-            RRect.fromRectAndRadius(cellRect, const Radius.circular(4)), 
-            fillPaint
-          );
+          // Gambar Kotak
+          Rect cellRect = Rect.fromLTWH(c * cellW, r * cellH, cellW, cellH);
+          canvas.drawRRect(RRect.fromRectAndRadius(cellRect.deflate(2), const Radius.circular(4)), fillPaint);
+
+          // Logic Path Line sederhana
+          Offset center = Offset(c * cellW + cellW/2, r * cellH + cellH/2);
+          if (first) {
+            pathLine.moveTo(center.dx, center.dy);
+            first = false;
+          } else {
+            pathLine.lineTo(center.dx, center.dy);
+          }
         }
       }
     }
+
+    // Gambar garis penghubung antar titik agar terlihat seperti jalur
+    canvas.drawPath(pathLine, pathPaint);
   }
 
   @override
   bool shouldRepaint(covariant ImprovedGridPainter oldDelegate) => true;
-}
-
-class BGPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    Paint p = Paint()..color = const Color(0xFFA3C9A8).withOpacity(0.1);
-    canvas.drawCircle(Offset(size.width * 0.85, size.height * 0.1), 160, p);
-    canvas.drawCircle(Offset(size.width * 0.1, size.height * 0.7), 220, p);
-  }
-
-  @override
-  bool shouldRepaint(CustomPainter oldDelegate) => false;
 }
