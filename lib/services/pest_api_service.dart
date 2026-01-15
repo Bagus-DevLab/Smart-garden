@@ -180,7 +180,104 @@ class PestApiService {
   }
 
   // =========================================================================
-  // API METHODS - ✅ FIXED TIMEOUTS
+  // ✅ NEW: SYSTEM CONTROL (Camera Sleep/Wake + API Connection)
+  // =========================================================================
+
+  /// Set system active state (controls camera sleep mode + database status)
+  /// - true: Wake camera + set system_active = true in database
+  /// - false: Sleep camera + set system_active = false in database
+  Future<Map<String, dynamic>> setSystemActive(bool active) async {
+    try {
+      final url = '$_apiUrl/api/system/control';
+      debugPrint('🔌 Setting system ${active ? "ACTIVE (Camera Wake)" : "INACTIVE (Camera Sleep)"}');
+      
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: json.encode({
+          'active': active,
+        }),
+      ).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          throw TimeoutException('System control timeout');
+        },
+      );
+
+      debugPrint('🔌 System Control Response Status: ${response.statusCode}');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        debugPrint('✅ System control success: $data');
+        
+        return {
+          'success': true,
+          'system_active': data['system_active'] ?? active,
+          'mqtt_sent': data['mqtt_sent'] ?? false,
+          'message': data['message'] ?? (active ? 'System activated' : 'System deactivated'),
+        };
+      } else {
+        final errorData = json.decode(response.body);
+        return {
+          'success': false,
+          'message': errorData['error'] ?? 'Failed to control system',
+        };
+      }
+    } on TimeoutException {
+      return {
+        'success': false,
+        'message': 'Connection timeout - API might be busy',
+      };
+    } catch (e) {
+      debugPrint('❌ Set system active error: $e');
+      return {
+        'success': false,
+        'message': 'Failed to control system: $e',
+      };
+    }
+  }
+
+  /// Get current system status (from database + ESP32)
+  Future<Map<String, dynamic>> getSystemStatus() async {
+    try {
+      final url = '$_apiUrl/api/system/status';
+      debugPrint('📊 Getting system status');
+      
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        debugPrint('📊 System Status: $data');
+        
+        return {
+          'success': true,
+          'system_active': data['system_active'] ?? false,
+          'esp32_online': data['esp32_online'] ?? false,
+          'esp32_system_enabled': data['esp32_system_enabled'] ?? false,
+          'esp32_camera_sleep_mode': data['esp32_camera_sleep_mode'] ?? false,
+          'mqtt_connected': data['mqtt_connected'] ?? false,
+          'total_detections': data['total_detections'] ?? 0,
+        };
+      }
+      
+      return {'success': false, 'message': 'Failed to get status'};
+    } catch (e) {
+      debugPrint('❌ Get system status error: $e');
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // =========================================================================
+  // API METHODS
   // =========================================================================
 
   /// Fetch history of pest detections
@@ -196,7 +293,7 @@ class PestApiService {
           'Accept': 'application/json',
         },
       ).timeout(
-        const Duration(seconds: 30), // ✅ Increased timeout
+        const Duration(seconds: 30),
         onTimeout: () {
           throw TimeoutException('Request timeout - API might be processing detection');
         },
@@ -247,10 +344,10 @@ class PestApiService {
     }
   }
 
-  /// Check for new detection - ✅ WITH RETRY LOGIC
+  /// Check for new detection - WITH RETRY LOGIC
   Future<Map<String, dynamic>> checkNewDetection({
     int maxRetries = 2,
-    Duration timeout = const Duration(seconds: 20), // ✅ Increased
+    Duration timeout = const Duration(seconds: 20),
   }) async {
     int retryCount = 0;
     
@@ -283,7 +380,6 @@ class PestApiService {
             'data': data,
           };
         } else if (response.statusCode == 503) {
-          // API busy - wait longer and retry
           if (retryCount < maxRetries) {
             debugPrint('⚠️ API busy (503) - retrying in 3s...');
             await Future.delayed(const Duration(seconds: 3));
@@ -326,7 +422,7 @@ class PestApiService {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-      ).timeout(const Duration(seconds: 15)); // ✅ Increased
+      ).timeout(const Duration(seconds: 15));
 
       debugPrint('🗑️ Delete Response Status: ${response.statusCode}');
       
@@ -342,7 +438,7 @@ class PestApiService {
     }
   }
 
-  /// Test connection to API - ✅ WITH BETTER ERROR HANDLING
+  /// Test connection to API - WITH BETTER ERROR HANDLING
   Future<Map<String, dynamic>> testConnection() async {
     try {
       final url = '$_apiUrl/ping';
@@ -465,10 +561,6 @@ class PestApiService {
     }
   }
 
-  // =========================================================================
-  // ✅ NEW: CHECK API HEALTH
-  // =========================================================================
-
   /// Check if API is ready (Roboflow loaded, MQTT connected)
   Future<bool> isApiReady() async {
     try {
@@ -479,7 +571,6 @@ class PestApiService {
       final data = result['data'] as Map<String, dynamic>?;
       if (data == null) return false;
       
-      // Check if Roboflow and MQTT are ready
       final roboflowReady = data['roboflow_ready'] == true;
       final mqttConnected = data['mqtt_connected'] == true;
       
