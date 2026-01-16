@@ -35,7 +35,7 @@ class ChatService {
         final data = jsonDecode(response.body);
         return data['response']; // Ambil text balasan bot
       } else if (response.statusCode == 429) {
-        throw Exception('Kuota harian habis (Maks 5 chat). Besok lagi ya!');
+        throw Exception('Kuota harian habis (Maks 10 chat). Besok lagi ya!');
       } else {
         throw Exception('Gagal: ${response.statusCode}');
       }

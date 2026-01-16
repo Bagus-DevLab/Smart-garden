@@ -159,7 +159,7 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
     lastStatus = currentStatus;
   }
 
-  // --- 3. UI BUILDER (TAMPILAN CANTIK) ---
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -178,12 +178,9 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
             Text(currentWeather != null ? "Online • Live Update" : "Connecting...", style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications_active_outlined, color: AppColors.warning),
-            onPressed: () => _showNotification("Test Notifikasi", "Sistem notifikasi berjalan normal."),
-          ),
-          const SizedBox(width: 10),
+        // Bagian Actions (Tombol Lonceng) sudah dihapus
+        actions: const [
+          SizedBox(width: 20), // Memberi sedikit jarak padding di kanan
         ],
       ),
       body: RefreshIndicator(

@@ -46,12 +46,12 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
   bool _esp32Online = false;
   bool _esp32CameraSleepMode = false;
 
-  String _connectionStatus = 'Connecting';
   String overallStatus = 'Aman';
   Color statusColor = AppColors.success;
   int totalDetections = 0;
   List<PestDetection> recentDetections = [];
   String _lastDetectionTime = '-';
+  DateTime? _lastOnlineTime;
 
   @override
   void initState() {
@@ -80,6 +80,11 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
       await prefs.setString('overall_status', overallStatus);
       await prefs.setString('last_detection_time', _lastDetectionTime);
       await prefs.setBool('system_enabled', isSystemEnabled);
+      
+      // Save last online time
+      if (_lastOnlineTime != null) {
+        await prefs.setString('last_online_time', _lastOnlineTime!.toIso8601String());
+      }
     } catch (e) {
       debugPrint('❌ Save cache error: $e');
     }
@@ -99,6 +104,13 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
           overallStatus = prefs.getString('overall_status') ?? 'Aman';
           _lastDetectionTime = prefs.getString('last_detection_time') ?? '-';
           isSystemEnabled = prefs.getBool('system_enabled') ?? true;
+          
+          // Load last online time
+          final lastOnlineStr = prefs.getString('last_online_time');
+          if (lastOnlineStr != null) {
+            _lastOnlineTime = DateTime.parse(lastOnlineStr);
+          }
+          
           _updateStatusColor();
         });
         _cacheImages();
@@ -137,25 +149,42 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     if (!mounted) return;
 
     setState(() {
+      final wasOnline = _esp32Online;
       isSystemConnected = result['success'] == true;
-      _connectionStatus = isSystemConnected ? 'Connected' : 'Error: ${result['message']}';
       
       if (result['success'] == true && result['data'] != null) {
         final data = result['data'] as Map<String, dynamic>;
         _esp32Online = data['esp32_online'] == true;
         _esp32CameraSleepMode = data['esp32_camera_sleep_mode'] ?? false;
         
+        // Track online/offline transitions
+        if (_esp32Online && !wasOnline) {
+          // Just came online
+          _lastOnlineTime = DateTime.now();
+        } else if (!_esp32Online && wasOnline) {
+          // Just went offline - record the time
+          _lastOnlineTime = DateTime.now();
+        } else if (_esp32Online) {
+          // Still online - update time
+          _lastOnlineTime = DateTime.now();
+        }
+        // If offline and was offline, keep the existing _lastOnlineTime
+        
         debugPrint('🔌 ESP32 Status: $_esp32Online');
         debugPrint('📷 Camera Sleep: $_esp32CameraSleepMode');
+        if (_lastOnlineTime != null) {
+          debugPrint('⏰ Last online: $_lastOnlineTime');
+        }
       }
     });
+    
+    _saveCache();
   }
 
   Future<void> _loadHistory() async {
     if (!isSystemEnabled) {
       setState(() {
         isSystemConnected = false;
-        _connectionStatus = 'Sistem Nonaktif';
       });
       return;
     }
@@ -169,7 +198,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
         _processedIds = detections.map((d) => d.id).toSet();
         totalDetections = detections.length;
         isSystemConnected = true;
-        _connectionStatus = 'Connected';
         _updateAlertStatus();
       });
 
@@ -180,7 +208,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
       if (mounted) {
         setState(() {
           isSystemConnected = false;
-          _connectionStatus = e.toString().contains('timeout') ? 'Timeout' : 'Error';
         });
       }
     }
@@ -193,10 +220,28 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
       
       if (result['success'] == true && result['data'] != null) {
         final data = result['data'] as Map<String, dynamic>;
+        final wasOnline = _esp32Online;
+        final isNowOnline = data['esp32_online'] == true;
+        
         setState(() {
-          _esp32Online = data['esp32_online'] == true;
+          _esp32Online = isNowOnline;
           _esp32CameraSleepMode = data['esp32_camera_sleep_mode'] ?? false;
+          
+          // Track online/offline transitions
+          if (isNowOnline && !wasOnline) {
+            // Just came online
+            _lastOnlineTime = DateTime.now();
+          } else if (!isNowOnline && wasOnline) {
+            // Just went offline
+            _lastOnlineTime = DateTime.now();
+          } else if (isNowOnline) {
+            // Still online
+            _lastOnlineTime = DateTime.now();
+          }
+          // If offline and was offline, keep existing time
         });
+        
+        _saveCache();
       }
     } catch (e) {
       debugPrint('❌ Update ESP32 status error: $e');
@@ -236,7 +281,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
 
         setState(() {
           _lastDetectionTime = data['lastDetection']?.toString() ?? '-';
-          _connectionStatus = 'Connected';
           isSystemConnected = true;
           
           if (data['esp32Status'] != null) {
@@ -257,7 +301,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     } catch (e) {
       if (mounted) {
         setState(() {
-          _connectionStatus = e.toString().contains('timeout') ? 'Timeout' : 'Disconnected';
           isSystemConnected = false;
         });
       }
@@ -286,22 +329,16 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
 
     _saveCache();
     
-    // ✨ TRIGGER NOTIFICATION HERE
     _triggerPestNotification(detection);
     
     _showSnackBar('🐛 ${detection.pestName} terdeteksi! (${detection.confidence}%)', isError: false);
   }
 
-  // ✨ NEW METHOD: Trigger pest notification
   Future<void> _triggerPestNotification(PestDetection detection) async {
     try {
-      // Get notification cubit from context
       final notificationCubit = context.read<NotificationCubit>();
-      
-      // Decode image for notification
       final imageData = _apiService.decodeImage(detection.imageBase64);
       
-      // Show local notification with image
       await PestNotificationService.showPestDetection(
         pestName: detection.pestName,
         confidence: detection.confidence,
@@ -362,8 +399,7 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
         if (mounted) {
           setState(() {
             isSystemEnabled = true;
-            _connectionStatus = 'Connecting';
-            _esp32CameraSleepMode = false; // Camera akan wake up
+            _esp32CameraSleepMode = false;
           });
         }
         
@@ -371,7 +407,6 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
         await _loadHistory();
         _startPolling();
         
-        // ✨ SHOW SYSTEM NOTIFICATION
         if (mounted) {
           final notificationCubit = context.read<NotificationCubit>();
           await PestNotificationService.showSystemStatus(
@@ -417,14 +452,12 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
         setState(() {
           isSystemEnabled = false;
           isSystemConnected = false;
-          _connectionStatus = 'Sistem Nonaktif';
-          _esp32CameraSleepMode = true; // Camera sleep
+          _esp32CameraSleepMode = true;
         });
       }
       
       await _saveCache();
       
-      // ✨ SHOW SYSTEM NOTIFICATION
       if (result['success'] == true) {
         if (mounted) {
           final notificationCubit = context.read<NotificationCubit>();
@@ -667,115 +700,320 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
   }
 
   Widget _buildHeader() {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(color: AppColors.warning.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
-          child: Icon(Icons.bug_report, color: AppColors.warning, size: 28),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Deteksi Hama', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-              Text('Monitoring & identifikasi hama padi', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+    return BlocBuilder<NotificationCubit, NotificationState>(
+      builder: (context, state) {
+        final pestNotifCount = state.notifications
+            .where((n) => n.type == NotificationType.pestDetection && !n.isRead)
+            .length;
+        
+        if (pestNotifCount > 0) {
+          debugPrint('📬 Unread pest notifications: $pestNotifCount');
+        }
+        
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: AppColors.primary.withValues(alpha: 0.08),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.03),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
             ],
           ),
-        ),
-        // ✨ NOTIFICATION BADGE WITH BLOC BUILDER
-        BlocBuilder<NotificationCubit, NotificationState>(
-          builder: (context, state) {
-            final pestNotifCount = state.notifications
-                .where((n) => n.type == NotificationType.pestDetection && !n.isRead)
-                .length;
-            
-            if (pestNotifCount == 0) {
-              return _buildConnectionBadge();
-            }
-            
-            return Row(
-              children: [
-                Stack(
-                  clipBehavior: Clip.none,
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.bug_report_outlined,
+                  color: AppColors.warning,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    IconButton(
-                      onPressed: () {
-                        // Open notification drawer
-                        Scaffold.of(context).openEndDrawer();
-                      },
-                      icon: Icon(
-                        Icons.notifications,
-                        color: AppColors.primary,
-                        size: 28,
+                    Text(
+                      'Deteksi Hama',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                        height: 1.2,
                       ),
                     ),
-                    if (pestNotifCount > 0)
-                      Positioned(
-                        right: 8,
-                        top: 8,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: AppColors.error,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                          ),
-                          constraints: const BoxConstraints(
-                            minWidth: 18,
-                            minHeight: 18,
-                          ),
-                          child: Text(
-                            pestNotifCount > 99 ? '99+' : '$pestNotifCount',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 9,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Monitoring & identifikasi',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                        fontWeight: FontWeight.w500,
                       ),
+                    ),
                   ],
                 ),
-                const SizedBox(width: 8),
-                _buildConnectionBadge(),
-              ],
-            );
-          },
-        ),
-      ],
+              ),
+              _buildWifiIndicator(),
+            ],
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildConnectionBadge() {
+  Widget _buildWifiIndicator() {
+    final bool isConnected = isSystemConnected && _esp32Online;
+    final Color wifiColor = isConnected ? AppColors.success : AppColors.error;
+    
+    return GestureDetector(
+      onTap: _showConnectionDetails,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: wifiColor.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: wifiColor.withValues(alpha: 0.2),
+            width: 1,
+          ),
+        ),
+        child: Icon(
+          isConnected ? Icons.wifi : Icons.wifi_off,
+          color: wifiColor,
+          size: 20,
+        ),
+      ),
+    );
+  }
+
+  void _showConnectionDetails() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 20,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.textTertiary.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: (isSystemConnected ? AppColors.success : AppColors.error).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    isSystemConnected ? Icons.wifi_rounded : Icons.wifi_off_rounded,
+                    color: isSystemConnected ? AppColors.success : AppColors.error,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Status Koneksi',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        isSystemConnected ? 'Sistem terhubung' : 'Ada masalah koneksi',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            _buildConnectionItem(
+              icon: Icons.cloud_rounded,
+              label: 'Server API',
+              status: isSystemConnected ? 'Terhubung' : 'Terputus',
+              isConnected: isSystemConnected,
+            ),
+            const SizedBox(height: 12),
+            _buildConnectionItem(
+              icon: Icons.memory_rounded,
+              label: 'ESP32 Device',
+              status: _esp32Online ? 'Online' : 'Offline',
+              isConnected: _esp32Online,
+            ),
+            const SizedBox(height: 12),
+            _buildConnectionItem(
+              icon: Icons.videocam_rounded,
+              label: 'Kamera',
+              status: _esp32CameraSleepMode ? 'Sleep Mode' : (_esp32Online ? 'Aktif' : 'Nonaktif'),
+              isConnected: _esp32Online && !_esp32CameraSleepMode,
+            ),
+            const SizedBox(height: 12),
+            _buildConnectionItem(
+              icon: Icons.power_settings_new_rounded,
+              label: 'Sistem',
+              status: isSystemEnabled ? 'Diaktifkan' : 'Dinonaktifkan',
+              isConnected: isSystemEnabled,
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _testConnection();
+                  _updateEsp32Status();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 0,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.refresh_rounded, color: Colors.white, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Refresh Status',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectionItem({
+    required IconData icon,
+    required String label,
+    required String status,
+    required bool isConnected,
+  }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: (isSystemConnected ? AppColors.success : AppColors.error).withValues(alpha: 0.1),
+        color: AppColors.surfaceVariant.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: (isSystemConnected ? AppColors.success : AppColors.error).withValues(alpha: 0.3)),
+        border: Border.all(
+          color: isConnected 
+              ? AppColors.success.withValues(alpha: 0.2)
+              : AppColors.error.withValues(alpha: 0.2),
+          width: 1,
+        ),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: (isConnected ? AppColors.success : AppColors.error).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              icon,
+              color: isConnected ? AppColors.success : AppColors.error,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  status,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
           Container(
             width: 8,
             height: 8,
-            decoration: BoxDecoration(color: isSystemConnected ? AppColors.success : AppColors.error, shape: BoxShape.circle),
+            decoration: BoxDecoration(
+              color: isConnected ? AppColors.success : AppColors.error,
+              shape: BoxShape.circle,
+            ),
           ),
-          const SizedBox(width: 8),
-          Text(_connectionStatus, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isSystemConnected ? AppColors.success : AppColors.error)),
         ],
       ),
     );
   }
 
   Widget _buildCameraStatusCard() {
-    // Determine camera status based on system state
     final bool cameraActive = isSystemEnabled && _esp32Online && !_esp32CameraSleepMode;
-    final Color cameraColor = cameraActive ? AppColors.success : AppColors.error;
+    final Color cameraColor = cameraActive ? AppColors.success : AppColors.textSecondary;
     final String cameraStatusText = !isSystemEnabled 
         ? 'Kamera Nonaktif' 
         : _esp32CameraSleepMode 
@@ -785,8 +1023,8 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                 : 'Kamera Offline';
     
     final IconData cameraIcon = !isSystemEnabled || _esp32CameraSleepMode
-        ? Icons.camera_alt_outlined
-        : Icons.camera_alt;
+        ? Icons.videocam_off_outlined
+        : Icons.videocam;
 
     String statusMessage = '';
     if (!isSystemEnabled) {
@@ -796,81 +1034,43 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     } else if (_esp32Online) {
       statusMessage = 'Monitoring area secara realtime';
     } else {
-      statusMessage = 'Menunggu koneksi ESP32...';
+      // Show offline time if available
+      if (_lastOnlineTime != null) {
+        statusMessage = 'Offline sejak ${_formatOfflineTime(_lastOnlineTime!)}';
+      } else {
+        statusMessage = 'Menunggu koneksi ESP32...';
+      }
     }
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
+    return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: cameraActive 
-              ? [AppColors.success.withValues(alpha: 0.1), AppColors.success.withValues(alpha: 0.05)]
-              : [AppColors.error.withValues(alpha: 0.1), AppColors.error.withValues(alpha: 0.05)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: cameraColor.withValues(alpha: 0.3),
-          width: 2,
+          color: cameraColor.withValues(alpha: 0.15),
+          width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: cameraColor.withValues(alpha: 0.1),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: cameraColor.withValues(alpha: 0.15),
-              shape: BoxShape.circle,
-              boxShadow: cameraActive ? [
-                BoxShadow(
-                  color: cameraColor.withValues(alpha: 0.3),
-                  blurRadius: 12,
-                  spreadRadius: 2,
-                ),
-              ] : [],
+              color: cameraColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Icon(
-                  cameraIcon,
-                  color: cameraColor,
-                  size: 32,
-                ),
-                if (cameraActive)
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: AppColors.success,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.white,
-                          width: 2,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.success.withValues(alpha: 0.5),
-                            blurRadius: 4,
-                            spreadRadius: 1,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
+            child: Icon(
+              cameraIcon,
+              color: cameraColor,
+              size: 26,
             ),
           ),
           const SizedBox(width: 16),
@@ -892,9 +1092,9 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                     Text(
                       cameraStatusText,
                       style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: cameraColor,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
                       ),
                     ),
                   ],
@@ -905,6 +1105,8 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                   style: TextStyle(
                     fontSize: 12,
                     color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w500,
+                    height: 1.4,
                   ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -912,74 +1114,104 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
               ],
             ),
           ),
-          Icon(
-            cameraActive ? Icons.videocam : Icons.videocam_off,
-            color: cameraColor,
-            size: 28,
-          ),
         ],
       ),
     );
+  }
+
+  // Helper method to format offline time
+  String _formatOfflineTime(DateTime offlineTime) {
+    final now = DateTime.now();
+    
+    // If offline happened today, show time
+    if (offlineTime.year == now.year && 
+        offlineTime.month == now.month && 
+        offlineTime.day == now.day) {
+      return 'pukul ${offlineTime.hour.toString().padLeft(2, '0')}:${offlineTime.minute.toString().padLeft(2, '0')}';
+    }
+    
+    // If yesterday
+    final yesterday = now.subtract(const Duration(days: 1));
+    if (offlineTime.year == yesterday.year && 
+        offlineTime.month == yesterday.month && 
+        offlineTime.day == yesterday.day) {
+      return 'kemarin pukul ${offlineTime.hour.toString().padLeft(2, '0')}:${offlineTime.minute.toString().padLeft(2, '0')}';
+    }
+    
+    // Otherwise show date and time
+    return '${offlineTime.day}/${offlineTime.month} pukul ${offlineTime.hour.toString().padLeft(2, '0')}:${offlineTime.minute.toString().padLeft(2, '0')}';
   }
 
   Widget _buildOverallStatusCard() {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [statusColor, statusColor.withValues(alpha: 0.7)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: statusColor.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))],
+        color: statusColor,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: statusColor.withValues(alpha: 0.2),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Status Hama Padi', style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.9), fontWeight: FontWeight.w500)),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                            boxShadow: [BoxShadow(color: Colors.white.withValues(alpha: 0.5), blurRadius: 8, spreadRadius: 2)],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(overallStatus.toUpperCase(), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white)),
-                      ],
+                    Text(
+                      'STATUS HAMA PADI',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white.withValues(alpha: 0.8),
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 1,
+                      ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
+                    Text(
+                      overallStatus.toUpperCase(),
+                      style: const TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        height: 1,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     Text(
                       !isSystemEnabled ? 'Sistem monitoring sedang nonaktif'
                           : totalDetections >= 2 ? 'Terdeteksi aktivitas hama di beberapa area'
                           : totalDetections == 1 ? 'Terdeteksi 1 aktivitas hama'
                           : 'Tidak ada deteksi hama saat ini',
-                      style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.9)),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontWeight: FontWeight.w500,
+                        height: 1.4,
+                      ),
                     ),
                   ],
                 ),
               ),
               Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 child: Icon(
                   !isSystemEnabled ? Icons.power_settings_new
-                      : totalDetections >= 2 ? Icons.warning_amber
-                      : totalDetections == 1 ? Icons.info_outline
-                      : Icons.check_circle,
-                  size: 48,
+                      : totalDetections >= 2 ? Icons.warning_amber_rounded
+                      : totalDetections == 1 ? Icons.info_outline_rounded
+                      : Icons.check_circle_outline_rounded,
+                  size: 40,
                   color: Colors.white,
                 ),
               ),
@@ -987,16 +1219,27 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
           ),
           const SizedBox(height: 20),
           Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)),
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _buildStatusInfo('Total Deteksi', totalDetections.toString()),
-                Container(width: 1, height: 30, color: Colors.white.withValues(alpha: 0.3)),
+                Container(
+                  width: 1,
+                  height: 32,
+                  color: Colors.white.withValues(alpha: 0.25),
+                ),
                 _buildStatusInfo('Status', overallStatus),
-                Container(width: 1, height: 30, color: Colors.white.withValues(alpha: 0.3)),
-                _buildStatusInfo('Update', _lastDetectionTime != '-' ? PestDetection(id: 0, timestamp: _lastDetectionTime, imageBase64: '', motionDetected: false, confidence: 0, pestName: '').getTimeAgo().split(' ')[0] : '-'),
+                Container(
+                  width: 1,
+                  height: 32,
+                  color: Colors.white.withValues(alpha: 0.25),
+                ),
+                _buildStatusInfo('Update', _getUpdateValue()),
               ],
             ),
           ),
@@ -1005,53 +1248,164 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     );
   }
 
+  String _getUpdateValue() {
+    if (_lastDetectionTime == '-') return '-';
+    try {
+      final testDetection = PestDetection(
+        id: 0,
+        timestamp: _lastDetectionTime,
+        imageBase64: '',
+        motionDetected: false,
+        confidence: 0,
+        pestName: '',
+      );
+      final timeAgo = testDetection.getTimeAgo();
+      final parts = timeAgo.split(' ');
+      return parts.isNotEmpty ? parts[0] : '-';
+    } catch (e) {
+      return '-';
+    }
+  }
+
   Widget _buildStatusInfo(String label, String value) {
     return Column(
       children: [
-        Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
-        Text(label, style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.9))),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.white.withValues(alpha: 0.75),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ],
     );
   }
 
   Widget _buildQuickStats() {
     final avgConfidence = recentDetections.isEmpty ? 0 : (recentDetections.map((d) => d.confidence).reduce((a, b) => a + b) / recentDetections.length).round();
+    
+    String updateValue = '-';
+    if (_lastDetectionTime != '-') {
+      try {
+        final testDetection = PestDetection(
+          id: 0, 
+          timestamp: _lastDetectionTime, 
+          imageBase64: '', 
+          motionDetected: false, 
+          confidence: 0, 
+          pestName: ''
+        );
+        final timeAgo = testDetection.getTimeAgo();
+        final parts = timeAgo.split(' ');
+        updateValue = parts.isNotEmpty ? parts[0] : '-';
+      } catch (e) {
+        updateValue = '-';
+      }
+    }
 
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 3,
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      childAspectRatio: 0.95,
+    return Row(
       children: [
-        _buildStatCard(icon: Icons.pest_control, label: 'Jenis Hama', value: recentDetections.map((d) => d.pestName).toSet().length.toString(), color: AppColors.error),
-        _buildStatCard(icon: Icons.trending_up, label: 'Akurasi', value: '$avgConfidence%', color: AppColors.success),
-        _buildStatCard(icon: Icons.access_time, label: 'Update', value: _lastDetectionTime != '-' ? PestDetection(id: 0, timestamp: _lastDetectionTime, imageBase64: '', motionDetected: false, confidence: 0, pestName: '').getTimeAgo().split(' ')[0] : '-', color: AppColors.info),
+        Expanded(
+          child: _buildStatCard(
+            icon: Icons.pest_control,
+            label: 'Jenis Hama',
+            value: recentDetections.map((d) => d.pestName).toSet().length.toString(),
+            color: AppColors.error,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildStatCard(
+            icon: Icons.trending_up,
+            label: 'Akurasi',
+            value: '$avgConfidence%',
+            color: AppColors.success,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildStatCard(
+            icon: Icons.access_time,
+            label: 'Update',
+            value: updateValue,
+            color: AppColors.info,
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildStatCard({required IconData icon, required String label, required String value, required Color color}) {
+  Widget _buildStatCard({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+  }) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
       decoration: BoxDecoration(
-        color: AppColors.surfaceVariant,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [BoxShadow(color: AppColors.shadow, blurRadius: 6, offset: const Offset(0, 2))],
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: color.withValues(alpha: 0.12),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
             child: Icon(icon, color: color, size: 20),
           ),
-          const SizedBox(height: 8),
-          FittedBox(fit: BoxFit.scaleDown, child: Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary))),
-          const SizedBox(height: 4),
-          Text(label, style: TextStyle(fontSize: 10, color: AppColors.textSecondary), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 10),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: AppColors.textPrimary,
+                height: 1,
+              ),
+              maxLines: 1,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: AppColors.textSecondary,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.clip,
+          ),
         ],
       ),
     );
@@ -1083,17 +1437,47 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     return Container(
       height: 200,
       decoration: BoxDecoration(
-        color: AppColors.surfaceVariant,
+        color: AppColors.surfaceVariant.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.textTertiary.withValues(alpha: 0.2)),
+        border: Border.all(
+          color: AppColors.textTertiary.withValues(alpha: 0.1),
+          width: 1,
+        ),
       ),
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.pest_control_outlined, size: 48, color: AppColors.textSecondary),
-            const SizedBox(height: 12),
-            Text(!isSystemEnabled ? 'Sistem monitoring nonaktif' : 'Belum ada deteksi hama', style: TextStyle(color: AppColors.textSecondary, fontSize: 14)),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.textSecondary.withValues(alpha: 0.05),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.pest_control_outlined,
+                size: 48,
+                color: AppColors.textSecondary.withValues(alpha: 0.4),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              !isSystemEnabled ? 'Sistem Nonaktif' : 'Belum Ada Deteksi',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              !isSystemEnabled ? 'Aktifkan sistem untuk monitoring' : 'Area terpantau aman',
+              style: TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ],
         ),
       ),
@@ -1107,11 +1491,21 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
       onTap: () => _showDetailDialog(detection),
       child: Container(
         width: 200,
-        margin: const EdgeInsets.only(right: 12, bottom: 8),
+        margin: const EdgeInsets.only(right: 14, bottom: 8),
         decoration: BoxDecoration(
-          color: AppColors.surfaceVariant,
+          color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: AppColors.shadow, blurRadius: 8, offset: const Offset(0, 2))],
+          border: Border.all(
+            color: AppColors.textTertiary.withValues(alpha: 0.1),
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 12,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1119,34 +1513,69 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
           children: [
             Container(
               height: 130,
-              decoration: const BoxDecoration(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+              decoration: const BoxDecoration(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
               child: Stack(
                 children: [
                   ClipRRect(
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
                     child: _imageCache.containsKey(detection.id)
-                        ? Image.memory(_imageCache[detection.id]!, fit: BoxFit.cover, width: double.infinity, height: double.infinity)
+                        ? Image.memory(
+                            _imageCache[detection.id]!,
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                          )
                         : Container(
                             width: double.infinity,
                             height: double.infinity,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(colors: [severityColor.withValues(alpha: 0.3), severityColor.withValues(alpha: 0.6)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                            color: AppColors.surfaceVariant,
+                            child: Center(
+                              child: Icon(
+                                Icons.bug_report_outlined,
+                                size: 48,
+                                color: AppColors.textSecondary.withValues(alpha: 0.3),
+                              ),
                             ),
-                            child: Center(child: Icon(Icons.bug_report, size: 60, color: Colors.white.withValues(alpha: 0.5))),
                           ),
                   ),
                   Positioned(
-                    top: 8,
-                    right: 8,
+                    top: 10,
+                    right: 10,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.1),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.verified, size: 12, color: Colors.white),
-                          const SizedBox(width: 4),
-                          Text('${detection.confidence}%', style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.w600)),
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              color: severityColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            '${detection.confidence}%',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -1155,28 +1584,40 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(14),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(child: Text(detection.pestName, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                      const SizedBox(width: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(color: severityColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-                        child: Text(detection.getSeverityLabel(), style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: severityColor)),
-                      ),
-                    ],
+                  Text(
+                    detection.pestName,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      Icon(Icons.access_time, size: 12, color: AppColors.textSecondary),
-                      const SizedBox(width: 4),
-                      Text(detection.getTimeAgo(), style: TextStyle(fontSize: 10, color: AppColors.textTertiary)),
+                      Icon(
+                        Icons.access_time_rounded,
+                        size: 13,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          detection.getTimeAgo(),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textSecondary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ],
@@ -1210,35 +1651,37 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: canCapture 
-                ? [AppColors.primary, AppColors.primary.withValues(alpha: 0.8)] 
-                : [AppColors.textTertiary, AppColors.textTertiary.withValues(alpha: 0.8)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
+          color: canCapture ? AppColors.primary : AppColors.textTertiary.withValues(alpha: 0.3),
           borderRadius: BorderRadius.circular(16),
-          boxShadow: canCapture ? [BoxShadow(color: AppColors.primary.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4))] : [],
+          boxShadow: canCapture ? [
+            BoxShadow(
+              color: AppColors.primary.withValues(alpha: 0.25),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
+          ] : [],
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), shape: BoxShape.circle),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
               child: _isCapturing 
-                  ? const SizedBox(
-                      width: 28, 
-                      height: 28, 
+                  ? SizedBox(
+                      width: 24,
+                      height: 24,
                       child: CircularProgressIndicator(
-                        color: Colors.white, 
+                        color: Colors.white,
                         strokeWidth: 2.5,
                       ),
                     )
                   : Icon(
-                      canCapture ? Icons.camera_alt : Icons.camera_alt_outlined,
-                      color: Colors.white, 
-                      size: 28,
+                      Icons.camera_alt_rounded,
+                      color: Colors.white,
+                      size: 24,
                     ),
             ),
             const SizedBox(width: 16),
@@ -1247,8 +1690,12 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _isCapturing ? 'Memproses...' : 'Ambil Gambar Manual', 
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                    _isCapturing ? 'Memproses...' : 'Ambil Gambar Manual',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -1260,13 +1707,22 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
                                 ? 'API tidak terhubung'
                                 : !_esp32Online
                                     ? 'ESP32 tidak terhubung'
-                                    : 'Klik untuk mengambil foto hama',
-                    style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.9)),
+                                    : 'Klik untuk mengambil foto',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.85),
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ],
               ),
             ),
-            if (!_isCapturing) Icon(Icons.arrow_forward_ios, color: Colors.white.withValues(alpha: 0.9), size: 20),
+            if (!_isCapturing && canCapture)
+              Icon(
+                Icons.arrow_forward_rounded,
+                color: Colors.white,
+                size: 20,
+              ),
           ],
         ),
       ),
@@ -1277,54 +1733,76 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.surfaceVariant, 
-        borderRadius: BorderRadius.circular(16), 
-        boxShadow: [BoxShadow(color: AppColors.shadow, blurRadius: 8, offset: const Offset(0, 2))],
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: (isSystemEnabled ? AppColors.success : AppColors.textTertiary).withValues(alpha: 0.15),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: (isSystemEnabled ? AppColors.success : AppColors.textTertiary).withValues(alpha: 0.1), 
+              color: (isSystemEnabled ? AppColors.success : AppColors.textTertiary).withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
-              Icons.power_settings_new, 
-              color: isSystemEnabled ? AppColors.success : AppColors.textTertiary, 
-              size: 28,
+              Icons.power_settings_new_rounded,
+              color: isSystemEnabled ? AppColors.success : AppColors.textTertiary,
+              size: 24,
             ),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Sistem Deteksi Hama', 
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                  'Sistem Deteksi Hama',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   isSystemEnabled 
-                      ? 'Kamera aktif & monitoring area' 
-                      : 'Kamera nonaktif & sistem off',
-                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      ? 'Kamera aktif & monitoring' 
+                      : 'Kamera nonaktif',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),
           ),
           if (_isTogglingSystem)
-            const SizedBox(
+            SizedBox(
               width: 24,
               height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: AppColors.primary,
+              ),
             )
           else
             Switch(
-              value: isSystemEnabled, 
-              onChanged: (value) => value ? _enableSystem() : _disableSystem(), 
+              value: isSystemEnabled,
+              onChanged: (value) => value ? _enableSystem() : _disableSystem(),
               activeColor: AppColors.success,
+              inactiveThumbColor: AppColors.textTertiary,
             ),
         ],
       ),

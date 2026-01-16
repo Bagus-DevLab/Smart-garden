@@ -1,8 +1,11 @@
 // lib/widgets/app_drawer.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:smart_farming/pages/about_page.dart';
 import 'package:smart_farming/pages/notification_drawer.dart';
 import 'package:smart_farming/pages/pembajakan_page.dart';
+import 'package:smart_farming/pages/profile_page.dart';
+import 'package:smart_farming/pages/setting_page.dart';
 import 'package:smart_farming/pages/weather_page.dart';
 import 'package:smart_farming/theme/app_colors.dart';
 import 'package:smart_farming/cubit/auth/auth_cubit.dart';
@@ -173,8 +176,13 @@ class AppDrawer extends StatelessWidget {
                       icon: Icons.person_outline,
                       title: "Profil",
                       onTap: () {
-                        // TODO: Navigate to profile
-                        Navigator.pop(context);
+                        Navigator.pop(context); // Tutup drawer
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const ProfilePage(), // Panggil halaman ProfilePage
+                          ),
+                        );
                       },
                     ),
                     
@@ -185,21 +193,31 @@ class AppDrawer extends StatelessWidget {
                         thickness: 1,
                       ),
                     ),
-                    
+
                     _DrawerItem(
                       icon: Icons.settings_outlined,
                       title: "Pengaturan",
                       onTap: () {
-                        // TODO: Navigate to settings
-                        Navigator.pop(context);
+                        Navigator.pop(context); // Tutup drawer
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const SettingsPage(),
+                          ),
+                        );
                       },
                     ),
                     _DrawerItem(
                       icon: Icons.info_outline,
                       title: "Tentang Aplikasi",
                       onTap: () {
-                        // TODO: Show about dialog
-                        Navigator.pop(context);
+                        Navigator.pop(context); // Tutup drawer
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const AboutPage(),
+                          ),
+                        );
                       },
                     ),
                   ],

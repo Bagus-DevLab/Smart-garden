@@ -30,7 +30,7 @@ dependencies:
   # Network
   http: ^1.6.0
   
-  # Notifications (✅ Updated versions)
+  # Notifications
   flutter_local_notifications: ^19.5.0
   permission_handler: ^12.0.1
   
@@ -49,22 +49,18 @@ flutter_launcher_icons:
   ios: true
   image_path: assets/icon/app_icon.png
   min_sdk_android: 21
-  # Optional: Remove old launcher icon
   remove_alpha_ios: true
-  
-  # Android Adaptive Icon (Optional)
   # adaptive_icon_background: "#FFFFFF"
   # adaptive_icon_foreground: assets/icon/app_icon_foreground.png
 
 flutter:
   uses-material-design: true
-  
-  # ✅ ADD: Assets (if you have any)
-  # assets:
-  #   - assets/images/
-  #   - assets/icon/
-  
-  # ✅ ADD: Custom fonts (if you have any)
+
+  assets:
+    - assets/dev/
+    # - assets/images/
+    # - assets/icon/
+
   # fonts:
   #   - family: CustomFont
   #     fonts:
