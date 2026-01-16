@@ -2,7 +2,7 @@ name: smart_farming
 description: "Smart farming aplikasi untuk monitoring dan kontrol pertanian secara otomatis menggunakan IoT"
 publish_to: 'none'
 
-version: 1.0.3+4
+version: 1.0.5
 
 environment:
   sdk: ^3.9.2
