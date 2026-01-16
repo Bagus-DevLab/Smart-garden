@@ -12,6 +12,7 @@ import 'cubit/notification/notification_cubit.dart';
 
 import 'services/auth_service.dart';
 import 'services/notification_service.dart';
+import 'services/pest_notification_service.dart';
 
 import 'theme/app_colors.dart';
 
@@ -20,6 +21,7 @@ Future<void> firebaseBgHandler(RemoteMessage message) async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  print('📩 Background message: ${message.notification?.title}');
 }
 
 void main() async {
@@ -30,6 +32,12 @@ void main() async {
   );
 
   FirebaseMessaging.onBackgroundMessage(firebaseBgHandler);
+  
+  // ✨ INITIALIZE PEST NOTIFICATION SERVICE
+  await PestNotificationService.initialize();
+  await PestNotificationService.requestPermissions();
+  
+  print('✅ App initialized with notifications');
 
   runApp(const MyApp());
 }
@@ -47,7 +55,7 @@ class MyApp extends StatelessWidget {
         providers: [
           BlocProvider(
             create: (context) =>
-            AuthCubit(context.read<AuthService>())..checkAuthStatus(),
+                AuthCubit(context.read<AuthService>())..checkAuthStatus(),
           ),
           BlocProvider(create: (_) => NavigationCubit()),
           BlocProvider(create: (_) => NotificationCubit()),

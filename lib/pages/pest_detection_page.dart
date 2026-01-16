@@ -4,7 +4,20 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+
+// Bloc imports
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../cubit/notification/notification_cubit.dart';
+import '../cubit/notification/notification_state.dart';
+
+// Service imports
 import '../services/pest_api_service.dart';
+import '../services/pest_notification_service.dart';
+
+// Model imports
+import '../models/app_notification.dart';
+
+// Page imports
 import 'pest_gallery_page.dart';
 
 class PestDetectionPage extends StatefulWidget {
@@ -44,6 +57,11 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
   void initState() {
     super.initState();
     _apiService = PestApiService();
+    
+    // Initialize notification service
+    PestNotificationService.initialize();
+    PestNotificationService.requestPermissions();
+    
     _initializeApp();
   }
 
@@ -267,7 +285,35 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
     });
 
     _saveCache();
+    
+    // ✨ TRIGGER NOTIFICATION HERE
+    _triggerPestNotification(detection);
+    
     _showSnackBar('🐛 ${detection.pestName} terdeteksi! (${detection.confidence}%)', isError: false);
+  }
+
+  // ✨ NEW METHOD: Trigger pest notification
+  Future<void> _triggerPestNotification(PestDetection detection) async {
+    try {
+      // Get notification cubit from context
+      final notificationCubit = context.read<NotificationCubit>();
+      
+      // Decode image for notification
+      final imageData = _apiService.decodeImage(detection.imageBase64);
+      
+      // Show local notification with image
+      await PestNotificationService.showPestDetection(
+        pestName: detection.pestName,
+        confidence: detection.confidence,
+        detectionId: detection.id,
+        imageBytes: imageData,
+        notificationCubit: notificationCubit,
+      );
+      
+      debugPrint('✅ Notification triggered for: ${detection.pestName}');
+    } catch (e) {
+      debugPrint('❌ Failed to trigger notification: $e');
+    }
   }
 
   Future<void> _deleteDetection(int id) async {
@@ -325,11 +371,16 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
         await _loadHistory();
         _startPolling();
         
+        // ✨ SHOW SYSTEM NOTIFICATION
         if (mounted) {
-          _showSnackBar(
-            '🟢 Sistem aktif! Kamera diaktifkan', 
-            isError: false
+          final notificationCubit = context.read<NotificationCubit>();
+          await PestNotificationService.showSystemStatus(
+            message: 'Sistem monitoring diaktifkan. Kamera mulai beroperasi.',
+            isActive: true,
+            notificationCubit: notificationCubit,
           );
+          
+          _showSnackBar('🟢 Sistem aktif! Kamera diaktifkan', isError: false);
         }
       } else {
         _showSnackBar(
@@ -373,12 +424,17 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
       
       await _saveCache();
       
+      // ✨ SHOW SYSTEM NOTIFICATION
       if (result['success'] == true) {
         if (mounted) {
-          _showSnackBar(
-            '🔴 Sistem nonaktif! Kamera dimatikan', 
-            isError: false
+          final notificationCubit = context.read<NotificationCubit>();
+          await PestNotificationService.showSystemStatus(
+            message: 'Sistem monitoring dinonaktifkan. Kamera berhenti beroperasi.',
+            isActive: false,
+            notificationCubit: notificationCubit,
           );
+          
+          _showSnackBar('🔴 Sistem nonaktif! Kamera dimatikan', isError: false);
         }
       } else {
         if (mounted) {
@@ -628,7 +684,67 @@ class _PestDetectionPageState extends State<PestDetectionPage> with AutomaticKee
             ],
           ),
         ),
-        _buildConnectionBadge(),
+        // ✨ NOTIFICATION BADGE WITH BLOC BUILDER
+        BlocBuilder<NotificationCubit, NotificationState>(
+          builder: (context, state) {
+            final pestNotifCount = state.notifications
+                .where((n) => n.type == NotificationType.pestDetection && !n.isRead)
+                .length;
+            
+            if (pestNotifCount == 0) {
+              return _buildConnectionBadge();
+            }
+            
+            return Row(
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    IconButton(
+                      onPressed: () {
+                        // Open notification drawer
+                        Scaffold.of(context).openEndDrawer();
+                      },
+                      icon: Icon(
+                        Icons.notifications,
+                        color: AppColors.primary,
+                        size: 28,
+                      ),
+                    ),
+                    if (pestNotifCount > 0)
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: AppColors.error,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 18,
+                            minHeight: 18,
+                          ),
+                          child: Text(
+                            pestNotifCount > 99 ? '99+' : '$pestNotifCount',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(width: 8),
+                _buildConnectionBadge(),
+              ],
+            );
+          },
+        ),
       ],
     );
   }

@@ -1,5 +1,5 @@
 name: smart_farming
-description: "smart farming aplikasi untuk monitoring dan kontrol pertanian secara otomatis menggunakan IoT"
+description: "Smart farming aplikasi untuk monitoring dan kontrol pertanian secara otomatis menggunakan IoT"
 publish_to: 'none'
 
 version: 1.0.3+4
@@ -10,17 +10,31 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  
+  # UI & Navigation
   cupertino_icons: ^1.0.8
   curved_navigation_bar: ^1.0.6
+  
+  # State Management
   flutter_bloc: ^9.1.1
+  equatable: ^2.0.5
+  
+  # Firebase
   firebase_core: ^4.3.0
   firebase_auth: ^6.1.2
-  equatable: ^2.0.5
-  shared_preferences: ^2.2.2
-  http: ^1.6.0
   firebase_messaging: ^16.1.0
+  
+  # Local Storage
+  shared_preferences: ^2.2.2
+  
+  # Network
+  http: ^1.6.0
+  
+  # Notifications (✅ Updated versions)
   flutter_local_notifications: ^19.5.0
   permission_handler: ^12.0.1
+  
+  # Utils
   intl: ^0.18.1
 
 dev_dependencies:
@@ -29,12 +43,31 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
 
-# ⬇⬇⬇ INI HARUS DI LUAR flutter:
+# ✅ Launcher Icons Configuration (HARUS DI LUAR flutter:)
 flutter_launcher_icons:
   android: true
   ios: true
   image_path: assets/icon/app_icon.png
   min_sdk_android: 21
+  # Optional: Remove old launcher icon
+  remove_alpha_ios: true
+  
+  # Android Adaptive Icon (Optional)
+  # adaptive_icon_background: "#FFFFFF"
+  # adaptive_icon_foreground: assets/icon/app_icon_foreground.png
 
 flutter:
   uses-material-design: true
+  
+  # ✅ ADD: Assets (if you have any)
+  # assets:
+  #   - assets/images/
+  #   - assets/icon/
+  
+  # ✅ ADD: Custom fonts (if you have any)
+  # fonts:
+  #   - family: CustomFont
+  #     fonts:
+  #       - asset: fonts/CustomFont-Regular.ttf
+  #       - asset: fonts/CustomFont-Bold.ttf
+  #         weight: 700
