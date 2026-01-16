@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- File location: android/app/src/main/res/values/colors.xml -->
+<resources>
+    <!-- ✅ Notification color - matches your app theme -->
+    <color name="notification_color">#10B981</color>
+    
+    <!-- Optional: Additional colors for your app -->
+    <color name="primary">#10B981</color>
+    <color name="secondary">#3B82F6</color>
+    <color name="error">#EF4444</color>
+    <color name="warning">#F59E0B</color>
+    <color name="success">#10B981</color>
+</resources>

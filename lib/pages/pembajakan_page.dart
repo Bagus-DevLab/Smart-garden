@@ -40,7 +40,6 @@ class _PembajakanPageState extends State<PembajakanPage>
   String _soilStatus = "Menunggu...";
   String _lastUpdate = "--:--";
   String _recommendation = "Sedang memuat data...";
-  Color _statusColor = accentMint;
   bool _isConnected = false;
 
   // Grid Navigation
@@ -104,15 +103,12 @@ class _PembajakanPageState extends State<PembajakanPage>
   void _analyzeRealSoilData() {
     if (_soilMoisture < 35.0) {
       _soilStatus = "Kering";
-      _statusColor = warningOrange;
       _recommendation = "Tanah keras. Tunda pembajakan atau basahi lahan.";
     } else if (_soilMoisture <= 75.0) {
       _soilStatus = "Optimal";
-      _statusColor = successGreen;
       _recommendation = "Kondisi tanah ideal untuk pembajakan otomatis.";
     } else {
       _soilStatus = "Basah";
-      _statusColor = primaryTeal;
       _recommendation = "Tanah lembek. Gunakan pola spiral agar tidak selip.";
     }
   }

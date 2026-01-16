@@ -18,7 +18,7 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
   // Sesuaikan port jika di Nginx Proxy Manager kamu set port 80/443, hapus :8001
   // Jika kamu expose port 8001 langsung, gunakan port tersebut.
   // Asumsi: Domain ini sudah diarahkan ke container backend port 8001
-  final String baseUrl = "http://hyperh.smartfarmingpalcomtech.my.id";
+  final String baseUrl = "http://hyperh.smartfarmingpalcomtech.my.id:8001";
 
   // --- STATE DATA ---
   bool isLoading = true;
