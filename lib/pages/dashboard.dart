@@ -1,14 +1,128 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:smart_farming/theme/app_colors.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:async';
 
 // --- IMPORT CHAT COMPONENTS ---
 import 'package:smart_farming/cubit/chat/chat_cubit.dart';
 import 'package:smart_farming/services/chat_service.dart';
 import 'package:smart_farming/widgets/chat_bottom_sheet.dart';
 
-class Dashboard extends StatelessWidget {
+class Dashboard extends StatefulWidget {
   const Dashboard({super.key});
+
+  @override
+  State<Dashboard> createState() => _DashboardState();
+}
+
+class _DashboardState extends State<Dashboard> {
+  // --- API DATA VARIABLES ---
+  // Plant Health Data
+  double temperature = 0.0;
+  double humidity = 0.0;
+  double soilMoisture = 0.0;
+  double phWater = 0.0;
+  bool isPumpActive = false;
+
+  // Weather Data
+  String weatherCondition = 'Cerah Berawan';
+  double weatherHumidity = 75.0;
+  double windSpeed = 12.0;
+  String weatherVisibility = 'Baik';
+
+  bool isLoading = true;
+  String? errorMessage;
+  Timer? _pollingTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchPlantData();
+    _fetchWeatherData();
+    // Auto refresh setiap 10 detik
+    _pollingTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      _fetchPlantData();
+      _fetchWeatherData();
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollingTimer?.cancel();
+    super.dispose();
+  }
+
+  // --- FETCH DATA DARI PLANT HEALTH API ---
+  Future<void> _fetchPlantData() async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse(
+              'http://hyperh.smartfarmingpalcomtech.my.id:8001/dashboard',
+            ),
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        if (mounted) {
+          setState(() {
+            isLoading = false;
+            errorMessage = null;
+
+            // Mapping data dari API
+            temperature = (data['sensor']?['temperature'] ?? 28.0).toDouble();
+            humidity = (data['sensor']?['humidity'] ?? 65.0).toDouble();
+            soilMoisture = (data['sensor']?['soil_percent'] ?? 72.0).toDouble();
+            phWater = (data['sensor']?['ph'] ?? 6.5).toDouble();
+
+            String pumpStatus = data['pump_status'] ?? "OFF";
+            isPumpActive = pumpStatus == "ON";
+          });
+        }
+      } else {
+        throw Exception('Failed to load data');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+          errorMessage = 'Koneksi offline - tampilkan data terakhir';
+        });
+      }
+    }
+  }
+
+  // --- FETCH WEATHER DATA DARI AGRISKY API ---
+  Future<void> _fetchWeatherData() async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('https://agrisky-api-production.up.railway.app/weather'),
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        if (mounted) {
+          setState(() {
+            // Mapping weather data dari API
+            weatherCondition = data['condition'] ?? 'Cerah Berawan';
+            weatherHumidity = (data['humidity'] ?? 75.0).toDouble();
+            windSpeed = (data['wind_speed'] ?? 12.0).toDouble();
+            weatherVisibility = data['visibility'] ?? 'Baik';
+          });
+        }
+      }
+    } catch (e) {
+      // Jika API weather error, tetap gunakan default value
+      debugPrint('Weather API error: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -18,41 +132,41 @@ class Dashboard extends StatelessWidget {
 
       // 2. Gunakan Builder agar kita bisa mengakses context milik Provider di atasnya
       child: Builder(
-          builder: (context) {
-            // 3. Ubah Container root menjadi Scaffold agar bisa pakai floatingActionButton
-            return Scaffold(
-              backgroundColor: AppColors.background,
+        builder: (context) {
+          // 3. Ubah Container root menjadi Scaffold agar bisa pakai floatingActionButton
+          return Scaffold(
+            backgroundColor: AppColors.background,
 
-              // Body berisi tampilan Dashboard lama kamu
-              body: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildHeader(),
-                    const SizedBox(height: 24),
-                    _buildWeatherCard(),
-                    const SizedBox(height: 20),
-                    _buildPlantStatusCard(),
-                    const SizedBox(height: 20),
-                    _buildSensorGrid(),
-                    const SizedBox(height: 20),
-                    _buildQuickActions(),
-                    // Tambahan space di bawah agar konten tidak tertutup tombol chat
-                    const SizedBox(height: 80),
-                  ],
-                ),
+            // Body berisi tampilan Dashboard lama kamu
+            body: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(),
+                  const SizedBox(height: 24),
+                  _buildWeatherCard(),
+                  const SizedBox(height: 20),
+                  _buildPlantStatusCard(),
+                  const SizedBox(height: 20),
+                  _buildSensorGrid(),
+                  const SizedBox(height: 20),
+                  _buildQuickActions(),
+                  // Tambahan space di bawah agar konten tidak tertutup tombol chat
+                  const SizedBox(height: 80),
+                ],
               ),
+            ),
 
-              // 4. INI TOMBOL BUBBLE CHAT NYA
-              floatingActionButton: FloatingActionButton(
-                backgroundColor: AppColors.primary,
-                elevation: 4,
-                child: const Icon(Icons.chat_bubble, color: Colors.white),
-                onPressed: () => _showChatSheet(context),
-              ),
-            );
-          }
+            // 4. INI TOMBOL BUBBLE CHAT NYA
+            floatingActionButton: FloatingActionButton(
+              backgroundColor: AppColors.primary,
+              elevation: 4,
+              child: const Icon(Icons.chat_bubble, color: Colors.white),
+              onPressed: () => _showChatSheet(context),
+            ),
+          );
+        },
       ),
     );
   }
@@ -90,10 +204,7 @@ class Dashboard extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           'Monitoring Smart Farming',
-          style: TextStyle(
-            fontSize: 14,
-            color: AppColors.textSecondary,
-          ),
+          style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
         ),
       ],
     );
@@ -125,7 +236,11 @@ class Dashboard extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.wb_sunny, color: Colors.white.withOpacity(0.9), size: 20),
+                    Icon(
+                      Icons.wb_sunny,
+                      color: Colors.white.withOpacity(0.9),
+                      size: 20,
+                    ),
                     const SizedBox(width: 8),
                     Text(
                       'Cuaca Hari Ini',
@@ -139,7 +254,7 @@ class Dashboard extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'Cerah Berawan',
+                  weatherCondition,
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
@@ -149,21 +264,23 @@ class Dashboard extends StatelessWidget {
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    _buildWeatherDetail(Icons.water_drop, '75%'),
+                    _buildWeatherDetail(
+                      Icons.water_drop,
+                      '${weatherHumidity.toStringAsFixed(0)}%',
+                    ),
                     const SizedBox(width: 16),
-                    _buildWeatherDetail(Icons.air, '12 km/h'),
+                    _buildWeatherDetail(
+                      Icons.air,
+                      '${windSpeed.toStringAsFixed(1)} km/h',
+                    ),
                     const SizedBox(width: 16),
-                    _buildWeatherDetail(Icons.visibility, 'Baik'),
+                    _buildWeatherDetail(Icons.visibility, weatherVisibility),
                   ],
                 ),
               ],
             ),
           ),
-          Icon(
-            Icons.wb_cloudy,
-            size: 80,
-            color: Colors.white.withOpacity(0.3),
-          ),
+          Icon(Icons.wb_cloudy, size: 80, color: Colors.white.withOpacity(0.3)),
         ],
       ),
     );
@@ -176,10 +293,7 @@ class Dashboard extends StatelessWidget {
         const SizedBox(width: 4),
         Text(
           value,
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.white.withOpacity(0.9),
-          ),
+          style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.9)),
         ),
       ],
     );
@@ -208,11 +322,7 @@ class Dashboard extends StatelessWidget {
               color: AppColors.success.withOpacity(0.1),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(
-              Icons.spa,
-              color: AppColors.success,
-              size: 32,
-            ),
+            child: Icon(Icons.spa, color: AppColors.success, size: 32),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -239,19 +349,12 @@ class Dashboard extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   'Kondisi lingkungan mendukung pertumbuhan',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textTertiary,
-                  ),
+                  style: TextStyle(fontSize: 12, color: AppColors.textTertiary),
                 ),
               ],
             ),
           ),
-          Icon(
-            Icons.check_circle,
-            color: AppColors.success,
-            size: 28,
-          ),
+          Icon(Icons.check_circle, color: AppColors.success, size: 28),
         ],
       ),
     );
@@ -269,37 +372,69 @@ class Dashboard extends StatelessWidget {
         _buildSensorCard(
           icon: Icons.thermostat,
           title: 'Suhu',
-          value: '28',
+          value: temperature.toStringAsFixed(1),
           unit: '°C',
-          status: 'Optimal',
-          statusColor: AppColors.success,
+          status: temperature > 30
+              ? 'Tinggi'
+              : temperature < 20
+              ? 'Rendah'
+              : 'Optimal',
+          statusColor: temperature > 30
+              ? AppColors.warning
+              : temperature < 20
+              ? AppColors.error
+              : AppColors.success,
           iconColor: AppColors.error,
         ),
         _buildSensorCard(
           icon: Icons.water_drop,
           title: 'Kelembaban',
-          value: '65',
+          value: humidity.toStringAsFixed(0),
           unit: '%',
-          status: 'Normal',
-          statusColor: AppColors.info,
+          status: humidity > 80
+              ? 'Tinggi'
+              : humidity < 40
+              ? 'Rendah'
+              : 'Normal',
+          statusColor: humidity > 80
+              ? AppColors.warning
+              : humidity < 40
+              ? AppColors.error
+              : AppColors.info,
           iconColor: AppColors.info,
         ),
         _buildSensorCard(
           icon: Icons.grass,
           title: 'Kelembaban Tanah',
-          value: '72',
+          value: soilMoisture.toStringAsFixed(0),
           unit: '%',
-          status: 'Baik',
-          statusColor: AppColors.success,
+          status: soilMoisture > 80
+              ? 'Jenuh'
+              : soilMoisture < 40
+              ? 'Kering'
+              : 'Baik',
+          statusColor: soilMoisture > 80
+              ? AppColors.warning
+              : soilMoisture < 40
+              ? AppColors.error
+              : AppColors.success,
           iconColor: AppColors.primary,
         ),
         _buildSensorCard(
           icon: Icons.science,
-          title: 'pH Tanah',
-          value: '6.5',
+          title: 'pH Air',
+          value: phWater.toStringAsFixed(1),
           unit: '',
-          status: 'Ideal',
-          statusColor: AppColors.success,
+          status: phWater > 7.5
+              ? 'Basa'
+              : phWater < 6.5
+              ? 'Asam'
+              : 'Ideal',
+          statusColor: phWater > 7.5
+              ? AppColors.warning
+              : phWater < 6.5
+              ? AppColors.warning
+              : AppColors.success,
           iconColor: AppColors.warning,
         ),
       ],
@@ -422,26 +557,41 @@ class Dashboard extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: _buildActionButton(
-                icon: Icons.water,
-                label: 'Irigasi',
-                color: AppColors.info,
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.pushNamed(context, '/weather');
+                },
+                child: _buildActionButton(
+                  icon: Icons.water,
+                  label: 'Weatheri',
+                  color: AppColors.info,
+                ),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: _buildActionButton(
-                icon: Icons.history,
-                label: 'Riwayat',
-                color: AppColors.primary,
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.pushNamed(context, '/pembajakan');
+                },
+                child: _buildActionButton(
+                  icon: Icons.agriculture,
+                  label: 'Riwayat',
+                  color: AppColors.primary,
+                ),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: _buildActionButton(
-                icon: Icons.settings,
-                label: 'Pengaturan',
-                color: AppColors.accent,
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.pushNamed(context, '/setting');
+                },
+                child: _buildActionButton(
+                  icon: Icons.settings,
+                  label: 'Pengaturan',
+                  color: AppColors.accent,
+                ),
               ),
             ),
           ],

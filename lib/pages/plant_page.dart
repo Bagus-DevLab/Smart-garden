@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'dart:async';
 import 'dart:convert'; // Untuk JSON decoding
 import 'package:http/http.dart' as http; // Untuk koneksi API
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:smart_farming/theme/app_colors.dart'; // Pastikan path ini sesuai project kamu
+import 'package:smart_farming/cubit/chat/chat_cubit.dart';
+import 'package:smart_farming/theme/app_colors.dart';
 
 // --- 2. HALAMAN UTAMA ---
 class PlantHealthPage extends StatefulWidget {
@@ -14,10 +16,6 @@ class PlantHealthPage extends StatefulWidget {
 }
 
 class _PlantHealthPageState extends State<PlantHealthPage> {
-  // --- KONFIGURASI API ---
-  // Sesuaikan port jika di Nginx Proxy Manager kamu set port 80/443, hapus :8001
-  // Jika kamu expose port 8001 langsung, gunakan port tersebut.
-  // Asumsi: Domain ini sudah diarahkan ke container backend port 8001
   final String baseUrl = "http://hyperh.smartfarmingpalcomtech.my.id:8001";
 
   // --- STATE DATA ---
@@ -215,6 +213,7 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
             ),
           ],
         ),
+
         backgroundColor: AppColors.primary,
         elevation: 0,
         actions: [

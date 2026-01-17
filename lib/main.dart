@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:smart_farming/pages/pembajakan_page.dart';
+import 'package:smart_farming/pages/setting_page.dart';
+import 'package:smart_farming/pages/weather_page.dart';
 
 import 'firebase_options.dart';
 import 'widgets/auth_gate.dart';
@@ -80,6 +83,12 @@ class MyApp extends StatelessWidget {
                 useMaterial3: true,
               ),
               home: const AuthGate(),
+              routes: {
+                // Define your app routes here
+                '/weather': (context) => const WeatherDashboardScreen(),
+                '/pembajakan': (context) => const PembajakanPage(),
+                '/setting': (context) => const SettingsPage(),
+              },
             );
           },
         ),

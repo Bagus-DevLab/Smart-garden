@@ -4,7 +4,8 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:smart_farming/theme/app_colors.dart'; // Pastikan path ini benar
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:smart_farming/theme/app_colors.dart';
 
 class WeatherDashboardScreen extends StatefulWidget {
   const WeatherDashboardScreen({super.key});
@@ -35,9 +36,14 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
     super.initState();
     _initNotifications();
     _requestPermissions();
+
+    // 1. Load data cache dulu (supaya tidak loading lama)
+    _loadCachedData();
+
+    // 2. Fetch data baru dari server
     _fetchWeatherData();
 
-    // Auto Refresh tiap 10 detik
+    // 3. Auto Refresh tiap 10 detik
     _timer = Timer.periodic(const Duration(seconds: 10), (timer) {
       _fetchWeatherData(isBackground: true);
     });
@@ -49,14 +55,12 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
     super.dispose();
   }
 
-  // --- 1. SETUP NOTIFIKASI ---
+  // --- SETUP NOTIFIKASI ---
   Future<void> _initNotifications() async {
     const AndroidInitializationSettings initializationSettingsAndroid =
     AndroidInitializationSettings('@mipmap/ic_launcher');
-
     const InitializationSettings initializationSettings =
     InitializationSettings(android: initializationSettingsAndroid);
-
     await flutterLocalNotificationsPlugin.initialize(initializationSettings);
   }
 
@@ -67,21 +71,41 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
   Future<void> _showNotification(String title, String body) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'weather_channel', 'Peringatan Cuaca',
-      importance: Importance.max,
-      priority: Priority.high,
-      color: AppColors.error,
+      importance: Importance.max, priority: Priority.high, color: AppColors.error,
     );
     await flutterLocalNotificationsPlugin.show(0, title, body, NotificationDetails(android: androidDetails));
   }
 
-  // --- 2. AMBIL DATA DARI API ---
+  // --- LOGIC CACHE (PENYIMPANAN LOKAL) ---
+  Future<void> _loadCachedData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? cachedWeather = prefs.getString('cached_weather');
+      final String? cachedLogs = prefs.getString('cached_logs');
+
+      if (cachedWeather != null && mounted) {
+        setState(() {
+          currentWeather = json.decode(cachedWeather);
+          if (cachedLogs != null) {
+            recentLogs = List<Map<String, dynamic>>.from(json.decode(cachedLogs));
+          }
+          // Matikan loading karena data cache sudah tampil
+          isLoading = false;
+        });
+      }
+    } catch (e) {
+      print("Cache error: $e");
+    }
+  }
+
+  // --- AMBIL DATA API ---
   Future<void> _fetchWeatherData({bool isBackground = false}) async {
-    if (!isBackground) {
+    // Hanya tampilkan loading jika data kosong sama sekali (belum ada cache)
+    if (!isBackground && currentWeather == null) {
       setState(() { isLoading = true; errorMessage = null; });
     }
 
     try {
-      // Panggil 2 Endpoint sekaligus
       final currentResponse = await http.get(Uri.parse('$baseUrl/api/weather/status'));
       final historyResponse = await http.get(Uri.parse('$baseUrl/api/weather/history?limit=10'));
 
@@ -90,53 +114,60 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
 
         if (jsonResponse['status'] == 'success') {
           final backendData = jsonResponse['data'];
-
-          // Cek Trigger Notifikasi
           _checkAndTriggerNotification(backendData);
+
+          // Siapkan Data Baru
+          Map<String, dynamic> newWeatherData = {
+            'location': 'Kebun Percobaan',
+            'data': {
+              'temperature': backendData['final_temp'],
+              'humidity': backendData['sensor_hum'],
+              'wind_speed': backendData['final_wind'],
+              'rainfall_pct': backendData['sensor_rain_pct'] ?? 0,
+              'status': backendData['final_rain_status'],
+              'source': backendData['decision_source'],
+            }
+          };
+
+          List<dynamic> newLogs = [];
+          if (historyResponse.statusCode == 200) {
+            final jsonHistory = json.decode(historyResponse.body);
+            if (jsonHistory['status'] == 'success') {
+              List<dynamic> rawLogs = jsonHistory['data'];
+              newLogs = rawLogs.map((log) {
+                DateTime dt = DateTime.parse(log['created_at'].toString());
+                return {
+                  'time': "${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}",
+                  'temp': log['final_temp'].toString(),
+                  'status': log['final_rain_status'],
+                  'source': log['decision_source'].toString().split('|').first.trim(),
+                };
+              }).toList();
+            }
+          }
 
           if (mounted) {
             setState(() {
-              // Simpan Data Utama
-              currentWeather = {
-                'location': 'Kebun Percobaan',
-                'data': {
-                  'temperature': backendData['final_temp'],
-                  'humidity': backendData['sensor_hum'],
-                  'wind_speed': backendData['final_wind'],
-                  'rainfall_pct': backendData['sensor_rain_pct'] ?? 0,
-                  'status': backendData['final_rain_status'],
-                  'source': backendData['decision_source'],
-                }
-              };
-
-              // Simpan Data History
-              if (historyResponse.statusCode == 200) {
-                final jsonHistory = json.decode(historyResponse.body);
-                if (jsonHistory['status'] == 'success') {
-                  List<dynamic> rawLogs = jsonHistory['data'];
-                  recentLogs = rawLogs.map((log) {
-                    DateTime dt = DateTime.parse(log['created_at'].toString());
-                    // Tambah 7 Jam jika server UTC, tapi biasanya Python sudah WIB.
-                    // Sesuaikan jika jam meleset.
-                    return {
-                      'time': "${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}",
-                      'temp': log['final_temp'].toString(),
-                      'status': log['final_rain_status'],
-                      'source': log['decision_source'].toString().split('|').first.trim(),
-                    };
-                  }).toList();
-                }
-              }
+              currentWeather = newWeatherData;
+              recentLogs = newLogs;
               isLoading = false;
+              errorMessage = null; // Reset error jika berhasil
             });
+
+            // SIMPAN KE CACHE
+            final prefs = await SharedPreferences.getInstance();
+            prefs.setString('cached_weather', json.encode(newWeatherData));
+            prefs.setString('cached_logs', json.encode(newLogs));
           }
         }
       }
     } catch (e) {
-      print("Error: $e");
-      if (!isBackground) {
+      print("Error API: $e");
+      // Jika error dan tidak ada data cache sama sekali, baru tampilkan error
+      if (!isBackground && currentWeather == null) {
         setState(() { errorMessage = "Gagal koneksi internet"; isLoading = false; });
       }
+      // Jika sudah ada data (cache), biarkan saja user melihat data lama, jangan ditimpa error
     }
   }
 
@@ -144,11 +175,9 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
     String currentStatus = data['final_rain_status'].toString();
     double temp = double.parse(data['final_temp'].toString());
 
-    // Logic Hujan
     if (currentStatus.contains("Hujan") && !lastStatus.contains("Hujan")) {
       _showNotification("⚠️ Peringatan Hujan", "Hujan terdeteksi! Segera amankan area kebun.");
     }
-    // Logic Panas
     if (temp > 35.0) {
       final now = DateTime.now();
       if (lastNotificationTime == null || now.difference(lastNotificationTime!).inMinutes > 60) {
@@ -159,11 +188,10 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
     lastStatus = currentStatus;
   }
 
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background, // Cream
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: AppColors.background,
         elevation: 0,
@@ -175,26 +203,35 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text("AGRISKY AI", style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold, fontSize: 18)),
-            Text(currentWeather != null ? "Online • Live Update" : "Connecting...", style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+            // Indikator status koneksi kecil di bawah judul
+            Text(
+              isLoading && currentWeather == null
+                  ? "Connecting..."
+                  : (errorMessage != null ? "Offline Mode (Cached)" : "Online • Live Update"),
+              style: TextStyle(
+                  color: errorMessage != null ? AppColors.warning : AppColors.textSecondary,
+                  fontSize: 11
+              ),
+            ),
           ],
         ),
-        // Bagian Actions (Tombol Lonceng) sudah dihapus
-        actions: const [
-          SizedBox(width: 20), // Memberi sedikit jarak padding di kanan
-        ],
+        actions: const [SizedBox(width: 20)],
       ),
       body: RefreshIndicator(
         color: AppColors.primary,
-        onRefresh: _fetchWeatherData,
-        child: isLoading
+        onRefresh: () => _fetchWeatherData(),
+        child: isLoading && currentWeather == null
+        // Loading HANYA muncul jika belum punya data sama sekali (install pertama)
             ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
-            : errorMessage != null
+            : errorMessage != null && currentWeather == null
+        // Error HANYA muncul jika internet mati DAN belum ada cache
             ? Center(child: Text(errorMessage!, style: const TextStyle(color: AppColors.error)))
             : _buildDashboardBody(),
       ),
     );
   }
 
+  // ... (Bagian _buildDashboardBody dan _buildStatCard SAMA PERSIS seperti sebelumnya)
   Widget _buildDashboardBody() {
     final data = currentWeather!['data'];
     bool isRaining = data['status'].toString().contains("Hujan");
@@ -202,11 +239,10 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
       children: [
-        // --- 1. CARD UTAMA ---
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: AppColors.surfaceVariant, // Putih
+            color: AppColors.surfaceVariant,
             borderRadius: BorderRadius.circular(24),
             boxShadow: const [BoxShadow(color: AppColors.shadow, blurRadius: 15, offset: Offset(0, 5))],
           ),
@@ -251,7 +287,6 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
 
         const SizedBox(height: 20),
 
-        // --- 2. GRID STATISTIK ---
         GridView.count(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -269,7 +304,6 @@ class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
 
         const SizedBox(height: 25),
 
-        // --- 3. LOG RIWAYAT ---
         Row(
           children: const [
             Icon(Icons.history, size: 18, color: AppColors.textSecondary),
