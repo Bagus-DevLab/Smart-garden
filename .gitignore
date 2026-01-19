@@ -10,6 +10,8 @@
 .history
 .svn/
 .swiftpm/
+android/build/
+build/
 migrate_working_dir/
 
 # IntelliJ related

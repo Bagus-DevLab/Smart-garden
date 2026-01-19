@@ -29,6 +29,7 @@ dependencies:
   
   # Network
   http: ^1.6.0
+  fl_chart: ^1.1.1
   
   # Notifications
   flutter_local_notifications: ^19.5.0
