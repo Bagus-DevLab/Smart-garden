@@ -16,7 +16,7 @@ class PlantHealthPage extends StatefulWidget {
 }
 
 class _PlantHealthPageState extends State<PlantHealthPage> {
-  final String baseUrl = "http://hyperh.smartfarmingpalcomtech.my.id:8001";
+  final String baseUrl = "https://hyperh.smartfarmingpalcomtech.my.id";
 
   // --- STATE DATA ---
   bool isLoading = true;

@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 class ChatService {
   // Gunakan 10.0.2.2 untuk Emulator Android mengakses Localhost Laptop
   // Jika pakai HP Fisik, ganti dengan IP Laptop (misal 192.168.1.x)
-  final String baseUrl = 'http://chatbot.smartfarmingpalcomtech.my.id/chat';
+  final String baseUrl = 'https://chatbot.smartfarmingpalcomtech.my.id/chat';
 
   Future<String> sendMessage(String message) async {
     try {
