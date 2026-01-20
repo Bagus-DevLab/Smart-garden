@@ -4,10 +4,16 @@ import 'dart:async';
 import 'dart:convert'; // Untuk JSON decoding
 import 'package:http/http.dart' as http; // Untuk koneksi API
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+// Pastikan import ini sesuai dengan struktur folder project kamu
+// Jika file ini merah, pastikan path-nya benar sesuai project kamu
 import 'package:smart_farming/cubit/chat/chat_cubit.dart';
 import 'package:smart_farming/theme/app_colors.dart';
 
-// --- 2. HALAMAN UTAMA ---
+// =============================================================================
+// 1. HALAMAN UTAMA (DASHBOARD)
+// =============================================================================
+
 class PlantHealthPage extends StatefulWidget {
   const PlantHealthPage({super.key});
 
@@ -16,6 +22,7 @@ class PlantHealthPage extends StatefulWidget {
 }
 
 class _PlantHealthPageState extends State<PlantHealthPage> {
+  // URL Backend Utama
   final String baseUrl = "https://hyperh.smartfarmingpalcomtech.my.id";
 
   // --- STATE DATA ---
@@ -26,19 +33,16 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
 
   // --- STATE POMPA ---
   bool isPumpActive = false;
-
-  // Karena ESP32 tidak mengirim level tangki (hanya pH & Soil),
-  // kita hardcode dulu atau simulasi lokal untuk UI.
-  double nutrientTankLevel = 85.0;
+  double nutrientTankLevel = 85.0; // Simulasi/Hardcode
 
   // Timer untuk Auto-Refresh Data
   Timer? _pollingTimer;
 
-  // --- STATE ALERT & LOG ---
+  // --- STATE ALERT & LOG LOKAL (UI ONLY) ---
   List<Map<String, dynamic>> activeAlerts = [];
   List<Map<String, String>> activityLogs = [];
   String recommendationText = "Menunggu data dari server...";
-  bool isAiCritical = false; // Status dari AI Backend
+  bool isAiCritical = false;
 
   // Logic Notifikasi
   DateTime? _lastNotifTime;
@@ -53,7 +57,7 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
     // 1. Ambil data pertama kali
     _fetchDashboardData();
 
-    // 2. Pasang Timer untuk update otomatis setiap 3 detik (Real-time monitoring)
+    // 2. Pasang Timer update otomatis setiap 3 detik
     _pollingTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
       _fetchDashboardData();
     });
@@ -73,43 +77,40 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
 
-        setState(() {
-          isLoading = false;
-          isError = false;
+        if (mounted) {
+          setState(() {
+            isLoading = false;
+            isError = false;
 
-          // Mapping Data dari JSON Backend
-          // Backend mengirim: { "sensor": {"ph":..., "soil_percent":...}, "pump_status": "ON/OFF", "ai_analysis": ... }
+            // Menggunakan num agar aman (bisa int atau double)
+            phWater = (data['sensor']['ph'] ?? 0).toDouble();
+            soilMoisture = (data['sensor']['soil_percent'] ?? 0).toDouble();
 
-          phWater = (data['sensor']['ph'] ?? 0.0).toDouble();
-          soilMoisture = (data['sensor']['soil_percent'] ?? 0).toDouble();
+            String pumpStatusStr = data['pump_status'] ?? "OFF";
+            isPumpActive = pumpStatusStr == "ON";
 
-          // Status Pompa Real dari Alat
-          String pumpStatusStr = data['pump_status'] ?? "OFF";
-          isPumpActive = pumpStatusStr == "ON";
+            var aiData = data['ai_analysis'];
+            recommendationText = aiData['message'] ?? "Tidak ada data AI";
+            isAiCritical = aiData['is_critical'] ?? false;
 
-          // Analisis AI dari Backend
-          var aiData = data['ai_analysis'];
-          recommendationText = aiData['message'] ?? "Tidak ada data AI";
-          isAiCritical = aiData['is_critical'] ?? false;
-
-          // Update Alert Lokal & Notifikasi
-          _analyzeSystemLocal();
-        });
+            _analyzeSystemLocal();
+          });
+        }
       } else {
         throw Exception('Failed to load data');
       }
     } catch (e) {
       print("Error Fetching Data: $e");
-      setState(() {
-        isError = true;
-        // Jangan ubah isLoading jadi true biar UI gak kedip-kedip, cukup show error banner kalau perlu
-      });
+      if (mounted) {
+        setState(() {
+          isError = true;
+        });
+      }
     }
   }
 
   // --- API: KONTROL POMPA ---
   Future<void> _togglePumpApi() async {
-    // Optimistic UI Update (Ubah tampilan dulu biar responsif)
     bool previousState = isPumpActive;
     setState(() {
       isPumpActive = !isPumpActive;
@@ -127,58 +128,49 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
 
       if (response.statusCode == 200) {
         _addLog("Sukses", "Alat berhasil di-$action.");
-        // Data akan tersinkron ulang saat timer polling berikutnya jalan
       } else {
         throw Exception("Gagal kirim perintah");
       }
     } catch (e) {
       _addLog("Error", "Gagal koneksi ke alat!");
-      // Kembalikan switch jika gagal
       setState(() {
         isPumpActive = previousState;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Gagal mengontrol pompa: $e"), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Gagal mengontrol pompa: $e"), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 
-  // --- HELPER: LOG SYSTEM ---
+  // --- HELPER: LOG SYSTEM LOKAL ---
   void _addLog(String type, String message) {
     if (activityLogs.length > 5) activityLogs.removeLast();
-    setState(() {
-      activityLogs.insert(0, {
-        'time': "${DateTime.now().hour.toString().padLeft(2,'0')}:${DateTime.now().minute.toString().padLeft(2,'0')}",
-        'type': type,
-        'message': message
+    if (mounted) {
+      setState(() {
+        activityLogs.insert(0, {
+          'time': "${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}",
+          'type': type,
+          'message': message
+        });
       });
-    });
+    }
   }
 
-  // --- LOGIC: ANALISIS LOKAL (UNTUK UI BANNER) ---
-  // Meskipun AI sudah memberi saran, kita tetap butuh ini untuk menampilkan Banner Merah/Kuning di atas
   void _analyzeSystemLocal() {
     activeAlerts.clear();
     bool critical = false;
 
-    // 1. Alert pH
     if (phWater < 5.0) {
       activeAlerts.add({'title': 'pH Kritis', 'msg': 'Air terlalu Asam (${phWater.toStringAsFixed(1)})', 'type': 'danger'});
       critical = true;
     }
-
-    // 2. Alert Tanah
     if (soilMoisture < 30) {
       activeAlerts.add({'title': 'Tanah Kering', 'msg': 'Kelembaban hanya ${soilMoisture.toInt()}%', 'type': 'danger'});
       critical = true;
     }
 
-    // 3. Alert dari AI Backend (Prioritas)
-    if (isAiCritical) {
-      // Kita bisa tambahkan badge khusus AI jika mau
-    }
-
-    // Trigger Notifikasi HP
     if (critical) {
       final now = DateTime.now();
       if (_lastNotifTime == null || now.difference(_lastNotifTime!) > _notifCooldown) {
@@ -213,7 +205,6 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
             ),
           ],
         ),
-
         backgroundColor: AppColors.primary,
         elevation: 0,
         actions: [
@@ -237,17 +228,13 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 1. HEADER STATUS ALERT
               if (activeAlerts.isNotEmpty) ...[
                 _buildAlertBanner(),
                 const SizedBox(height: 20),
               ],
-
-              // 2. REKOMENDASI AI (DARI API)
               _buildRecommendationCard(),
               const SizedBox(height: 20),
 
-              // 3. MONITORING SENSOR DETIL
               const Text("Kondisi Lingkungan", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textMain)),
               const SizedBox(height: 10),
               _buildDetailedSensorCard(
@@ -273,16 +260,15 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
               ),
 
               const SizedBox(height: 24),
-
-              // 4. KONTROL POMPA (VIA API)
               const Text("Kontrol Aktuator", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textMain)),
               const SizedBox(height: 10),
               _buildPumpControlCard(),
 
               const SizedBox(height: 24),
 
-              // 5. RIWAYAT AKTIVITAS
+              // --- BAGIAN LOG ---
               _buildActivityLog(),
+
               const SizedBox(height: 30),
             ],
           ),
@@ -291,7 +277,7 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
     );
   }
 
-  // --- WIDGET COMPONENTS (SAMA SEPERTI SEBELUMNYA) ---
+  // --- WIDGET COMPONENTS ---
 
   Widget _buildAlertBanner() {
     return Column(
@@ -333,7 +319,7 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.smart_toy, color: isAiCritical ? AppColors.error : AppColors.info), // Icon Robot/AI
+          Icon(Icons.smart_toy, color: isAiCritical ? AppColors.error : AppColors.info),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -357,14 +343,8 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
   }
 
   Widget _buildDetailedSensorCard({
-    required String title,
-    required String value,
-    required String unit,
-    required IconData icon,
-    required String target,
-    required String status,
-    required Color color,
-    required double percentage,
+    required String title, required String value, required String unit, required IconData icon,
+    required String target, required String status, required Color color, required double percentage,
   }) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -378,10 +358,7 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
           Stack(
             alignment: Alignment.center,
             children: [
-              SizedBox(
-                width: 60, height: 60,
-                child: CircularProgressIndicator(value: percentage, color: color, backgroundColor: color.withOpacity(0.1), strokeWidth: 6),
-              ),
+              SizedBox(width: 60, height: 60, child: CircularProgressIndicator(value: percentage, color: color, backgroundColor: color.withOpacity(0.1), strokeWidth: 6)),
               Icon(icon, color: color, size: 24),
             ],
           ),
@@ -450,12 +427,7 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
                   ),
                 ],
               ),
-              // Switch untuk kontrol manual via API
-              Switch(
-                  value: isPumpActive,
-                  onChanged: (v) => _togglePumpApi(),
-                  activeColor: AppColors.secondary
-              ),
+              Switch(value: isPumpActive, onChanged: (v) => _togglePumpApi(), activeColor: AppColors.secondary),
             ],
           ),
           const SizedBox(height: 10),
@@ -469,12 +441,27 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text("Riwayat Aktivitas", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textMain)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text("Riwayat Aktivitas (Lokal)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textMain)),
+            TextButton(
+              onPressed: () {
+                // Navigasi ke Halaman History Database
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => SensorHistoryPage(baseUrl: baseUrl)),
+                );
+              },
+              child: const Text("Lihat Database Full", style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+            )
+          ],
+        ),
         const SizedBox(height: 10),
         Container(
           decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16)),
           child: activityLogs.isEmpty
-              ? const Padding(padding: EdgeInsets.all(16), child: Text("Belum ada aktivitas.", style: TextStyle(color: Colors.grey)))
+              ? const Padding(padding: EdgeInsets.all(16), child: Text("Belum ada aktivitas baru.", style: TextStyle(color: Colors.grey)))
               : ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
@@ -495,15 +482,189 @@ class _PlantHealthPageState extends State<PlantHealthPage> {
     );
   }
 
-  // --- HELPER LOGIC WARNA & STATUS ---
   Color _getPhColor(double v) => (v < 5.5 || v > 7.0) ? AppColors.error : AppColors.secondary;
   String _getPhStatus(double v) => (v < 5.5) ? "Asam" : (v > 7.0) ? "Basa" : "Normal";
-
   Color _getMoistureColor(double v) => (v < 30) ? AppColors.warning : AppColors.info;
   String _getMoistureStatus(double v) => (v < 30) ? "Kering" : "Basah";
 }
 
-// --- SERVICE NOTIFIKASI ---
+// =============================================================================
+// 2. HALAMAN RIWAYAT DATABASE (SUDAH DIPERBAIKI)
+// =============================================================================
+
+class SensorHistoryPage extends StatefulWidget {
+  final String baseUrl;
+  const SensorHistoryPage({super.key, required this.baseUrl});
+
+  @override
+  State<SensorHistoryPage> createState() => _SensorHistoryPageState();
+}
+
+class _SensorHistoryPageState extends State<SensorHistoryPage> {
+  List<dynamic> historyData = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchHistory();
+  }
+
+  // --- API GET: AMBIL SEMUA HISTORY DARI DB ---
+  Future<void> _fetchHistory() async {
+    try {
+      // FIX: Gunakan endpoint '/history' (Untuk List), JANGAN '/history/latest'
+      final response = await http.get(Uri.parse('${widget.baseUrl}/history'));
+
+      if (response.statusCode == 200) {
+        final decodedData = json.decode(response.body);
+
+        // Validasi: Pastikan data yang diterima benar-benar LIST
+        if (decodedData is List) {
+          if (mounted) {
+            setState(() {
+              historyData = decodedData;
+              isLoading = false;
+            });
+          }
+        } else {
+          // Jika server error dan mengirim object tunggal, bungkus jadi list
+          if (mounted) {
+            setState(() {
+              historyData = [decodedData];
+              isLoading = false;
+            });
+          }
+        }
+      } else {
+        throw Exception("Gagal memuat history (Status: ${response.statusCode})");
+      }
+    } catch (e) {
+      if(mounted) {
+        setState(() { isLoading = false; });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error Load: $e")));
+      }
+    }
+  }
+
+  // --- API DELETE: HAPUS PER ITEM ---
+  Future<void> _confirmDelete(int logId, int index) async {
+    bool? confirm = await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Hapus Data Permanen"),
+        content: Text("Yakin ingin menghapus Log ID #$logId dari database?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Batal")),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text("Hapus")
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        final response = await http.delete(Uri.parse('${widget.baseUrl}/history/$logId'));
+
+        if (response.statusCode == 200) {
+          setState(() {
+            historyData.removeAt(index);
+          });
+          if(mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Data berhasil dihapus dari server"), backgroundColor: Colors.green),
+            );
+          }
+        } else {
+          final body = json.decode(response.body);
+          throw Exception(body['detail'] ?? "Gagal menghapus");
+        }
+      } catch (e) {
+        if(mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Gagal: $e"), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
+  }
+
+  // --- HELPER FORMAT TANGGAL ---
+  String _formatDate(String rawDate) {
+    try {
+      if (rawDate.isEmpty) return "-";
+      // Contoh input: "2026-01-20T02:16:16"
+      DateTime dt = DateTime.parse(rawDate);
+      // Output: "20/1/2026 02:16"
+      return "${dt.day}/${dt.month}/${dt.year} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
+    } catch (e) {
+      return rawDate;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Riwayat Database Full"),
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : historyData.isEmpty
+          ? const Center(child: Text("Database Kosong."))
+          : ListView.separated(
+        itemCount: historyData.length,
+        separatorBuilder: (c, i) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final item = historyData[index];
+
+          // Parsing data dengan aman menggunakan 'num' agar support int/double
+          final int id = item['id'] ?? 0;
+          final String time = _formatDate(item['timestamp'] ?? "");
+          final num ph = item['ph'] ?? 0;
+          final num soil = item['soil_percent'] ?? 0;
+
+          return ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            leading: CircleAvatar(
+              backgroundColor: AppColors.secondary.withOpacity(0.2),
+              child: Text("#$id", style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.secondary)),
+            ),
+            title: Text(time, style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 4.0),
+              child: Row(
+                children: [
+                  const Icon(Icons.science, size: 14, color: Colors.grey),
+                  const SizedBox(width: 4),
+                  Text("pH: ${ph.toStringAsFixed(1)}"),
+                  const SizedBox(width: 15),
+                  const Icon(Icons.water_drop, size: 14, color: Colors.grey),
+                  const SizedBox(width: 4),
+                  Text("Soil: $soil%"),
+                ],
+              ),
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              onPressed: () => _confirmDelete(id, index), // Trigger API Delete
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// 3. SERVICE NOTIFIKASI
+// =============================================================================
+
 class NotificationService {
   static final _notifications = FlutterLocalNotificationsPlugin();
 
