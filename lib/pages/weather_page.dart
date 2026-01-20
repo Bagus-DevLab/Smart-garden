@@ -16,7 +16,7 @@ class WeatherDashboardScreen extends StatefulWidget {
 
 class _WeatherDashboardScreenState extends State<WeatherDashboardScreen> {
   // --- CONFIG ---
-  final String baseUrl = 'https://agrisky-api-production.up.railway.app';
+  final String baseUrl = 'https://agrisky.smartfarmingpalcomtech.my.id';
   final String deviceId = 'PCB01';
 
   // --- STATE VARIABLES ---

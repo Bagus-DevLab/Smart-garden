@@ -26,11 +26,11 @@ class _DashboardState extends State<Dashboard> {
   double phWater = 0.0;
   bool isPumpActive = false;
 
-  // Weather Data
-  String weatherCondition = 'Cerah Berawan';
-  double weatherHumidity = 75.0;
-  double windSpeed = 12.0;
-  String weatherVisibility = 'Baik';
+  // --- WEATHER DATA VARIABLES (Updated) ---
+  String weatherCondition = 'Memuat...'; // final_rain_status
+  double weatherHumidity = 0.0;          // sensor_hum
+  double windSpeed = 0.0;                // final_wind
+  double weatherTemp = 0.0;              // final_temp (New)
 
   bool isLoading = true;
   String? errorMessage;
@@ -55,14 +55,16 @@ class _DashboardState extends State<Dashboard> {
   }
 
   // --- FETCH DATA DARI PLANT HEALTH API ---
+  // --- FETCH DATA DARI PLANT HEALTH API (HyperH) ---
+  // Hanya ambil Soil Moisture, pH, dan Pump Status
   Future<void> _fetchPlantData() async {
     try {
       final response = await http
           .get(
-            Uri.parse(
-              'http://hyperh.smartfarmingpalcomtech.my.id:8001/dashboard',
-            ),
-          )
+        Uri.parse(
+          'http://hyperh.smartfarmingpalcomtech.my.id/dashboard',
+        ),
+      )
           .timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
@@ -73,9 +75,8 @@ class _DashboardState extends State<Dashboard> {
             isLoading = false;
             errorMessage = null;
 
-            // Mapping data dari API
-            temperature = (data['sensor']?['temperature'] ?? 28.0).toDouble();
-            humidity = (data['sensor']?['humidity'] ?? 65.0).toDouble();
+            // Mapping data khusus Tanaman/Tanah
+            // HAPUS temperature & humidity dari sini
             soilMoisture = (data['sensor']?['soil_percent'] ?? 72.0).toDouble();
             phWater = (data['sensor']?['ph'] ?? 6.5).toDouble();
 
@@ -83,61 +84,64 @@ class _DashboardState extends State<Dashboard> {
             isPumpActive = pumpStatus == "ON";
           });
         }
-      } else {
-        throw Exception('Failed to load data');
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           isLoading = false;
-          errorMessage = 'Koneksi offline - tampilkan data terakhir';
         });
       }
     }
   }
 
+  // --- FETCH WEATHER DATA DARI AGRISKY API (UPDATED) ---
   // --- FETCH WEATHER DATA DARI AGRISKY API ---
+  // Mengambil data Cuaca DAN Sensor Suhu/Kelembaban
   Future<void> _fetchWeatherData() async {
     try {
       final response = await http
           .get(
-            Uri.parse('https://agrisky-api-production.up.railway.app/weather'),
-          )
+        Uri.parse('https://agrisky.smartfarmingpalcomtech.my.id/api/weather/status'),
+      )
           .timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
+        final result = json.decode(response.body);
 
-        if (mounted) {
-          setState(() {
-            // Mapping weather data dari API
-            weatherCondition = data['condition'] ?? 'Cerah Berawan';
-            weatherHumidity = (data['humidity'] ?? 75.0).toDouble();
-            windSpeed = (data['wind_speed'] ?? 12.0).toDouble();
-            weatherVisibility = data['visibility'] ?? 'Baik';
-          });
+        if (result['status'] == 'success' && result['data'] != null) {
+          final data = result['data'];
+
+          if (mounted) {
+            setState(() {
+              // 1. DATA UNTUK KARTU CUACA (Weather Card)
+              weatherCondition = data['final_rain_status'] ?? 'Cerah';
+              windSpeed = (data['final_wind'] ?? 0.0).toDouble();
+              // 'weatherTemp' ini suhu final gabungan (bisa dari BMKG atau Sensor)
+              weatherTemp = (data['final_temp'] ?? 0.0).toDouble();
+              // 'weatherHumidity' untuk kartu cuaca
+              weatherHumidity = (data['sensor_hum'] ?? 0).toDouble();
+
+              // 2. DATA UNTUK GRID SENSOR (Pindahan dari fungsi sebelah)
+              // Kita ambil dari 'sensor_temp' dan 'sensor_hum' (Raw Data Sensor)
+              temperature = (data['final_temp'] ?? 0.0).toDouble();
+              humidity = (data['sensor_hum'] ?? 0).toDouble();
+            });
+          }
         }
       }
     } catch (e) {
-      // Jika API weather error, tetap gunakan default value
       debugPrint('Weather API error: $e');
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // 1. Bungkus dengan BlocProvider agar ChatCubit tersedia di halaman ini
     return BlocProvider(
       create: (context) => ChatCubit(ChatService()),
-
-      // 2. Gunakan Builder agar kita bisa mengakses context milik Provider di atasnya
       child: Builder(
         builder: (context) {
-          // 3. Ubah Container root menjadi Scaffold agar bisa pakai floatingActionButton
           return Scaffold(
             backgroundColor: AppColors.background,
-
-            // Body berisi tampilan Dashboard lama kamu
             body: SingleChildScrollView(
               padding: const EdgeInsets.all(20),
               child: Column(
@@ -145,20 +149,17 @@ class _DashboardState extends State<Dashboard> {
                 children: [
                   _buildHeader(),
                   const SizedBox(height: 24),
-                  _buildWeatherCard(),
+                  _buildWeatherCard(), // Updated Widget
                   const SizedBox(height: 20),
                   _buildPlantStatusCard(),
                   const SizedBox(height: 20),
                   _buildSensorGrid(),
                   const SizedBox(height: 20),
                   _buildQuickActions(),
-                  // Tambahan space di bawah agar konten tidak tertutup tombol chat
                   const SizedBox(height: 80),
                 ],
               ),
             ),
-
-            // 4. INI TOMBOL BUBBLE CHAT NYA
             floatingActionButton: FloatingActionButton(
               backgroundColor: AppColors.primary,
               elevation: 4,
@@ -171,14 +172,12 @@ class _DashboardState extends State<Dashboard> {
     );
   }
 
-  // --- FUNGSI MEMUNCULKAN CHAT ---
   void _showChatSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) {
-        // Teruskan Cubit dari Dashboard ke dalam BottomSheet
         return BlocProvider.value(
           value: context.read<ChatCubit>(),
           child: const ChatBottomSheet(),
@@ -186,8 +185,6 @@ class _DashboardState extends State<Dashboard> {
       },
     );
   }
-
-  // --- WIDGET DASHBOARD ASLI KAMU (TIDAK ADA YANG DIUBAH DI BAWAH INI) ---
 
   Widget _buildHeader() {
     return Column(
@@ -210,12 +207,27 @@ class _DashboardState extends State<Dashboard> {
     );
   }
 
+  // --- UPDATED WEATHER CARD ---
   Widget _buildWeatherCard() {
+    // Tentukan icon besar berdasarkan kondisi cuaca
+    IconData mainIcon;
+    if (weatherCondition.toLowerCase().contains('hujan')) {
+      mainIcon = Icons.thunderstorm;
+    } else if (weatherCondition.toLowerCase().contains('awan') ||
+        weatherCondition.toLowerCase().contains('mendung')) {
+      mainIcon = Icons.cloud;
+    } else {
+      mainIcon = Icons.wb_sunny;
+    }
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [AppColors.sage, AppColors.teal],
+          // Ubah warna gradasi sedikit jika hujan agar lebih dramatis (optional)
+          colors: weatherCondition.toLowerCase().contains('hujan')
+              ? [Colors.blueGrey, AppColors.slate]
+              : [AppColors.sage, AppColors.teal],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -254,8 +266,8 @@ class _DashboardState extends State<Dashboard> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  weatherCondition,
-                  style: TextStyle(
+                  weatherCondition, // Dari 'final_rain_status'
+                  style: const TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
                     color: Colors.white,
@@ -264,23 +276,31 @@ class _DashboardState extends State<Dashboard> {
                 const SizedBox(height: 8),
                 Row(
                   children: [
+                    // Detail 1: Kelembaban (sensor_hum)
                     _buildWeatherDetail(
                       Icons.water_drop,
                       '${weatherHumidity.toStringAsFixed(0)}%',
                     ),
                     const SizedBox(width: 16),
+
+                    // Detail 2: Kecepatan Angin (final_wind)
                     _buildWeatherDetail(
                       Icons.air,
-                      '${windSpeed.toStringAsFixed(1)} km/h',
+                      '${windSpeed.toStringAsFixed(1)} m/s', // Satuan BMKG biasanya m/s atau knot, sesuaikan label
                     ),
                     const SizedBox(width: 16),
-                    _buildWeatherDetail(Icons.visibility, weatherVisibility),
+
+                    // Detail 3: Suhu Udara (final_temp) -> Menggantikan Visibility
+                    _buildWeatherDetail(
+                        Icons.thermostat,
+                        '${weatherTemp.toStringAsFixed(0)}°C'
+                    ),
                   ],
                 ),
               ],
             ),
           ),
-          Icon(Icons.wb_cloudy, size: 80, color: Colors.white.withOpacity(0.3)),
+          Icon(mainIcon, size: 80, color: Colors.white.withOpacity(0.3)),
         ],
       ),
     );

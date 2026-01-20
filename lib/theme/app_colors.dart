@@ -33,4 +33,7 @@ class AppColors {
   static const Color shadow = Color(0x1A000000);        // Box shadows
   static const Color textMain = Color(0xFF0F172A);
   static const Color textSub = Color(0xFF64748B);
+
+  static const Color slate = Color(0xFF6D8196);
+
 }
