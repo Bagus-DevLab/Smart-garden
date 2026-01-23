@@ -5,7 +5,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 /// Smart Rice Flowman - IoT Pembajakan Sawah Otomatis
-/// UI/UX Revamp: Modern Clean Interface
+/// UI/UX Revamp: Modern Clean Interface + Delete Feature
 
 class PembajakanPage extends StatefulWidget {
   const PembajakanPage({super.key});
@@ -18,9 +18,9 @@ class _PembajakanPageState extends State<PembajakanPage>
     with SingleTickerProviderStateMixin {
 
   // ================= WARNA TEMA MODERN =================
-  static const Color bgCream = Color(0xFFFAFAF5); // Lebih terang
-  static const Color primaryTeal = Color(0xFF0D5C63); // Teal Gelap (Primary)
-  static const Color accentMint = Color(0xFF44A1A0); // Mint Segar (Secondary)
+  static const Color bgCream = Color(0xFFFAFAF5);
+  static const Color primaryTeal = Color(0xFF0D5C63);
+  static const Color accentMint = Color(0xFF44A1A0);
   static const Color surfaceWhite = Colors.white;
   static const Color textDark = Color(0xFF1F2937);
   static const Color textGrey = Color(0xFF6B7280);
@@ -90,7 +90,7 @@ class _PembajakanPageState extends State<PembajakanPage>
           setState(() {
             _isConnected = true;
             _soilMoisture = currentMoisture;
-            _lastUpdate = DateTime.now().toString().substring(11, 16); // Simple timestamp
+            _lastUpdate = DateTime.now().toString().substring(11, 16);
             _analyzeRealSoilData();
           });
         }
@@ -170,6 +170,94 @@ class _PembajakanPageState extends State<PembajakanPage>
     }
   }
 
+  // ================= FITUR DELETE BARU =================
+  
+  Future<void> _deleteHistory(int id) async {
+    try {
+      final res = await http.delete(
+        Uri.parse('$baseUrl/api/plowing-history/$id')
+      ).timeout(const Duration(seconds: 10));
+
+      if (mounted) {
+        if (res.statusCode == 200) {
+          _showSnack('Riwayat berhasil dihapus', successGreen);
+          _loadHistory();
+        } else {
+          _showSnack('Gagal menghapus riwayat', errorRed);
+        }
+      }
+    } catch (e) {
+      _showSnack('Error: ${e.toString()}', errorRed);
+    }
+  }
+
+  Future<void> _deleteAllHistory() async {
+    // Konfirmasi dialog
+    bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Hapus Semua Riwayat?'),
+        content: const Text('Semua data riwayat pembajakan akan dihapus permanen. Tindakan ini tidak dapat dibatalkan.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal', style: TextStyle(color: textGrey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: errorRed),
+            child: const Text('Hapus Semua'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final res = await http.delete(
+        Uri.parse('$baseUrl/api/plowing-history/all')
+      ).timeout(const Duration(seconds: 10));
+
+      if (mounted) {
+        if (res.statusCode == 200) {
+          _showSnack('Semua riwayat berhasil dihapus', successGreen);
+          _loadHistory();
+        } else {
+          _showSnack('Gagal menghapus riwayat', errorRed);
+        }
+      }
+    } catch (e) {
+      _showSnack('Error: ${e.toString()}', errorRed);
+    }
+  }
+
+  void _showDeleteDialog(int id) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Hapus Riwayat?'),
+        content: const Text('Apakah Anda yakin ingin menghapus riwayat ini?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Batal', style: TextStyle(color: textGrey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteHistory(id);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: errorRed),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _handleGridDraw(Offset localPos, double boxSize) {
     double cellSize = boxSize / gridSize;
     int col = (localPos.dx / cellSize).floor();
@@ -240,7 +328,7 @@ class _PembajakanPageState extends State<PembajakanPage>
               const SizedBox(height: 15),
               _buildGridSystem(),
               const SizedBox(height: 25),
-              _buildSectionTitle("Riwayat Aktivitas", Icons.history_rounded),
+              _buildHistoryHeader(),
               const SizedBox(height: 15),
               _buildHistoryList(),
               const SizedBox(height: 40),
@@ -400,7 +488,6 @@ class _PembajakanPageState extends State<PembajakanPage>
       ),
       child: Column(
         children: [
-          // Header Grid
           Padding(
             padding: const EdgeInsets.all(20),
             child: Row(
@@ -422,7 +509,6 @@ class _PembajakanPageState extends State<PembajakanPage>
             ),
           ),
 
-          // The Grid
           LayoutBuilder(
             builder: (context, constraints) {
               double size = constraints.maxWidth;
@@ -447,7 +533,6 @@ class _PembajakanPageState extends State<PembajakanPage>
             },
           ),
 
-          // Controls
           Padding(
             padding: const EdgeInsets.all(20),
             child: Row(
@@ -491,6 +576,33 @@ class _PembajakanPageState extends State<PembajakanPage>
     );
   }
 
+  // ================= HEADER RIWAYAT DENGAN TOMBOL HAPUS SEMUA =================
+  Widget _buildHistoryHeader() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.history_rounded, color: primaryTeal, size: 20),
+            const SizedBox(width: 10),
+            const Text("Riwayat Aktivitas", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textDark)),
+          ],
+        ),
+        if (historyData.isNotEmpty)
+          TextButton.icon(
+            onPressed: _deleteAllHistory,
+            icon: const Icon(Icons.delete_sweep_rounded, size: 18, color: errorRed),
+            label: const Text("Hapus Semua", style: TextStyle(color: errorRed, fontWeight: FontWeight.bold, fontSize: 12)),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              backgroundColor: errorRed.withOpacity(0.1),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _buildHistoryList() {
     if (isLoadingHistory) {
       return const Center(child: CircularProgressIndicator(color: primaryTeal));
@@ -518,6 +630,7 @@ class _PembajakanPageState extends State<PembajakanPage>
         final data = historyData[index];
         final bool isExpanded = expandedIndex == index;
         final String date = (data['created_at'] ?? "N/A").toString().split("T")[0];
+        final int historyId = data['id'] ?? 0;
 
         return AnimatedContainer(
           duration: const Duration(milliseconds: 300),
@@ -537,11 +650,23 @@ class _PembajakanPageState extends State<PembajakanPage>
                   backgroundColor: primaryTeal.withOpacity(0.1),
                   child: const Icon(Icons.check_circle_outline, color: primaryTeal, size: 20),
                 ),
-                title: Text("Misi #${data['id']}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                title: Text("Misi #$historyId", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                 subtitle: Text(date, style: const TextStyle(fontSize: 12, color: textGrey)),
-                trailing: Text(
-                  "${data['total_distance']?.toStringAsFixed(0) ?? 0} cm",
-                  style: const TextStyle(fontWeight: FontWeight.bold, color: primaryTeal, fontSize: 13),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "${data['total_distance']?.toStringAsFixed(0) ?? 0} cm",
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: primaryTeal, fontSize: 13),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline_rounded, color: errorRed, size: 20),
+                      onPressed: () => _showDeleteDialog(historyId),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
                 ),
               ),
               if (isExpanded)
@@ -589,7 +714,7 @@ class _PembajakanPageState extends State<PembajakanPage>
   }
 }
 
-// ================= PAINTERS (DIPERHALUS) =================
+// ================= PAINTERS (TETAP SAMA) =================
 
 class ImprovedGridPainter extends CustomPainter {
   final List<List<bool>> grid;
@@ -603,7 +728,6 @@ class ImprovedGridPainter extends CustomPainter {
     double cellW = size.width / resolution;
     double cellH = size.height / resolution;
 
-    // Grid tipis
     Paint gridPaint = Paint()
       ..color = Colors.grey.withOpacity(0.2)
       ..strokeWidth = 1.0;
@@ -613,10 +737,8 @@ class ImprovedGridPainter extends CustomPainter {
       canvas.drawLine(Offset(0, i * cellH), Offset(size.width, i * cellH), gridPaint);
     }
 
-    // Sel Aktif
     Paint fillPaint = Paint()..color = activeColor;
 
-    // Path Line (Untuk menghubungkan titik - opsional visualisasi)
     Paint pathPaint = Paint()
       ..color = activeColor.withOpacity(0.5)
       ..strokeWidth = 3
@@ -629,11 +751,9 @@ class ImprovedGridPainter extends CustomPainter {
     for (int r = 0; r < resolution; r++) {
       for (int c = 0; c < resolution; c++) {
         if (grid[r][c]) {
-          // Gambar Kotak
           Rect cellRect = Rect.fromLTWH(c * cellW, r * cellH, cellW, cellH);
           canvas.drawRRect(RRect.fromRectAndRadius(cellRect.deflate(2), const Radius.circular(4)), fillPaint);
 
-          // Logic Path Line sederhana
           Offset center = Offset(c * cellW + cellW/2, r * cellH + cellH/2);
           if (first) {
             pathLine.moveTo(center.dx, center.dy);
@@ -645,7 +765,6 @@ class ImprovedGridPainter extends CustomPainter {
       }
     }
 
-    // Gambar garis penghubung antar titik agar terlihat seperti jalur
     canvas.drawPath(pathLine, pathPaint);
   }
 
